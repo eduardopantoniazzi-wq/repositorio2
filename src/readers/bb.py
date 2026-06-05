@@ -1,84 +1,167 @@
 """
 Leitor de extrato Banco do Brasil.
-Formato PDF: Dt.balancete | Dt.movimento | Histórico | Documento | Valor | Saldo
-Valor positivo = crédito, negativo = débito.
+Formato: Dt.balancete | Dt.movimento | Ag.origem | Lote | Histórico | Documento | Valor R$ | Saldo
+
+Cada transação ocupa 2 linhas visuais:
+  linha 1: datas | ag | lote | histórico/tipo | doc | valor(C/D) | saldo?
+  linha 2: nome do beneficiário (sem data, sem valor)
 """
 
 from __future__ import annotations
 import re
-
 import pandas as pd
+from .base import LeitorBase, _limpar_valor
 
-from .base import LeitorBase, _ler_pdf_tabelas, _limpar_valor
+_RE_DATA    = re.compile(r"\d{2}/\d{2}/\d{4}")
+_RE_VAL_CD  = re.compile(r"([\d]{1,3}(?:\.\d{3})*,\d{2})\s*\n?\s*([CD])")
+_RE_VAL_NUM = re.compile(r"-?[\d]{1,3}(?:\.\d{3})*,\d{2}")
+
+
+def _extrair_cd(texto: str):
+    """Retorna (credito, debito) a partir de '1.234,56\\nC' ou '1.234,56 D'."""
+    t = str(texto or "").replace("\n", " ").strip()
+    m = _RE_VAL_CD.search(t)
+    if m:
+        v = _limpar_valor(m.group(1))
+        return (v, 0.0) if m.group(2) == "C" else (0.0, v)
+    m2 = _RE_VAL_NUM.search(t)
+    if m2:
+        v = _limpar_valor(m2.group())
+        return (v, 0.0) if v >= 0 else (0.0, abs(v))
+    return 0.0, 0.0
 
 
 class LeitorBB(LeitorBase):
     BANCO = "BB"
 
-    _MAP_COLUNAS = {
-        r"dt\.?movimento|data mov":       "data",
-        r"dt\.?balancete|data balanc":    "data_balancete",
-        r"hist[oó]rico|descri[çc][aã]o": "descricao",
-        r"documento|doc\.?|n[uú]m":       "documento",
-        r"valor":                          "valor",
-        r"saldo":                          "saldo",
-    }
-
     def _parse_pdf(self) -> pd.DataFrame:
-        tabelas = _ler_pdf_tabelas(self.caminho)
-        frames = []
-        for tbl in tabelas:
-            tbl = self._renomear_colunas(tbl)
-            if "data" in tbl.columns and "valor" in tbl.columns:
-                frames.append(tbl)
-        if not frames:
-            raise ValueError(f"Nenhuma tabela reconhecida no PDF BB: {self.caminho}")
-        df = pd.concat(frames, ignore_index=True)
-        df = df.drop(columns=["data_balancete"], errors="ignore")
-        return self._separar_credito_debito(df)
+        import pdfplumber
+        all_rows: list[list] = []
+        with pdfplumber.open(self.caminho) as pdf:
+            for page in pdf.pages:
+                tbl = page.extract_table()
+                if not tbl:
+                    continue
+                # Pula cabeçalho (linha com "Dt. balancete" ou "Histórico")
+                start = 0
+                for i, row in enumerate(tbl):
+                    if row and any("Hist" in str(c or "") or "balancete" in str(c or "").lower() for c in row):
+                        start = i + 1
+                        break
+                all_rows.extend(tbl[start:])
+
+        if not all_rows:
+            raise ValueError(f"Nenhuma tabela no PDF BB: {self.caminho}")
+
+        registros = self._reconstruir(all_rows)
+        if not registros:
+            raise ValueError(f"Nenhuma transação extraída do PDF BB: {self.caminho}")
+        return pd.DataFrame(registros)
+
+    def _reconstruir(self, rows: list[list]) -> list[dict]:
+        registros: list[dict] = []
+        i = 0
+        while i < len(rows):
+            row = list(rows[i])
+            while len(row) < 8:
+                row.append(None)
+
+            # Colunas: 0=dt_bal, 1=dt_mov, 2=ag, 3=lote, 4=historico, 5=doc, 6=valor, 7=saldo
+            dt_bal   = str(row[0] or "").strip()
+            dt_mov   = str(row[1] or "").strip()
+            historico = str(row[4] or "").strip()
+            doc      = str(row[5] or "").strip()
+            val_raw  = str(row[6] or "").strip()
+            sld_raw  = str(row[7] or "").strip()
+
+            tem_data = _RE_DATA.search(dt_bal) or _RE_DATA.search(dt_mov)
+
+            if not tem_data and not _RE_VAL_CD.search(val_raw) and not historico:
+                i += 1
+                continue
+
+            # Data: prefere dt_mov, cai em dt_bal
+            data = ""
+            m = _RE_DATA.search(dt_mov) or _RE_DATA.search(dt_bal)
+            if m:
+                data = m.group()
+
+            # Limpa histórico: remove "lote ag tipo" (ex: "976 TED-...")
+            hist_limpo = re.sub(r"^\d{3,5}\s+", "", historico).strip()
+            # Remove prefixo de número de lote restante
+            hist_limpo = re.sub(r"^\d{3,5}\s+", "", hist_limpo).strip()
+
+            # Próxima linha pode ser o nome do beneficiário
+            beneficiario = ""
+            if i + 1 < len(rows):
+                prox = list(rows[i + 1])
+                while len(prox) < 8:
+                    prox.append(None)
+                prox_dt  = str(prox[0] or "").strip()
+                prox_hist = str(prox[4] or "").strip()
+                prox_val  = str(prox[6] or "").strip()
+                # Linha de beneficiário: sem data, sem valor, com texto em histórico
+                if (not _RE_DATA.search(prox_dt)
+                        and prox_hist
+                        and not _RE_VAL_CD.search(prox_val)
+                        and not _RE_VAL_NUM.search(prox_val)):
+                    beneficiario = prox_hist
+                    i += 1
+
+            descricao = f"{hist_limpo} / {beneficiario}".strip(" /") if beneficiario else hist_limpo
+
+            cred, deb = _extrair_cd(val_raw)
+            saldo = _limpar_valor(_RE_VAL_NUM.search(sld_raw).group() if _RE_VAL_NUM.search(sld_raw) else "")
+
+            if data:
+                registros.append({
+                    "data": data, "descricao": descricao,
+                    "documento": doc, "credito": cred, "debito": deb, "saldo": saldo,
+                })
+            i += 1
+        return registros
 
     def _parse_excel(self) -> pd.DataFrame:
-        for header_row in range(0, 10):
+        for hr in range(0, 10):
             try:
-                df = pd.read_excel(self.caminho, header=header_row)
-                df = self._renomear_colunas(df)
-                if "data" in df.columns and "valor" in df.columns:
-                    df = df.drop(columns=["data_balancete"], errors="ignore")
-                    return self._separar_credito_debito(df)
+                df = pd.read_excel(self.caminho, header=hr)
+                return self._normalizar_tabular(df)
             except Exception:
                 continue
-        raise ValueError(f"Não foi possível ler o Excel BB: {self.caminho}")
+        raise ValueError(f"Excel BB não reconhecido: {self.caminho}")
 
     def _parse_csv(self) -> pd.DataFrame:
         for sep in (";", ",", "\t"):
             for enc in ("utf-8", "latin-1", "cp1252"):
-                for header_row in range(0, 10):
+                for hr in range(0, 10):
                     try:
-                        df = pd.read_csv(
-                            self.caminho, sep=sep, encoding=enc,
-                            header=header_row, dtype=str, on_bad_lines="skip"
-                        )
-                        df = self._renomear_colunas(df)
-                        if "data" in df.columns and "valor" in df.columns:
-                            df = df.drop(columns=["data_balancete"], errors="ignore")
-                            return self._separar_credito_debito(df)
+                        df = pd.read_csv(self.caminho, sep=sep, encoding=enc,
+                                         header=hr, dtype=str, on_bad_lines="skip")
+                        return self._normalizar_tabular(df)
                     except Exception:
                         continue
-        raise ValueError(f"Não foi possível ler o CSV BB: {self.caminho}")
+        raise ValueError(f"CSV BB não reconhecido: {self.caminho}")
 
-    def _renomear_colunas(self, df: pd.DataFrame) -> pd.DataFrame:
+    _MAP = {
+        r"dt\.?movimento|data mov": "data",
+        r"hist[oó]rico":            "descricao",
+        r"documento|doc":           "documento",
+        r"valor":                   "valor",
+        r"saldo":                   "saldo",
+    }
+
+    def _normalizar_tabular(self, df: pd.DataFrame) -> pd.DataFrame:
         mapa = {}
         for col in df.columns:
-            col_lower = str(col).strip().lower()
-            for padrao, nome_padrao in self._MAP_COLUNAS.items():
-                if re.search(padrao, col_lower):
-                    mapa[col] = nome_padrao
+            cl = str(col).strip().lower()
+            for p, n in self._MAP.items():
+                if re.search(p, cl):
+                    mapa[col] = n
                     break
-        return df.rename(columns=mapa)
-
-    def _separar_credito_debito(self, df: pd.DataFrame) -> pd.DataFrame:
-        df["valor_num"] = df["valor"].apply(_limpar_valor)
-        df["credito"] = df["valor_num"].apply(lambda v: v if v > 0 else 0.0)
-        df["debito"]  = df["valor_num"].apply(lambda v: abs(v) if v < 0 else 0.0)
-        df = df.drop(columns=["valor", "valor_num"], errors="ignore")
+        df = df.rename(columns=mapa)
+        if "valor" in df.columns:
+            df["valor_num"] = df["valor"].apply(_limpar_valor)
+            df["credito"] = df["valor_num"].apply(lambda v: v if v > 0 else 0.0)
+            df["debito"]  = df["valor_num"].apply(lambda v: abs(v) if v < 0 else 0.0)
+            df = df.drop(columns=["valor", "valor_num"], errors="ignore")
         return df

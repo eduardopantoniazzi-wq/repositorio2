@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+data/extratos/*.pdf
+data/extratos/*.xlsx
+data/alertas_ultimo.xlsx
