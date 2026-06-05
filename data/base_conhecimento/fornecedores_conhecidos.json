@@ -1,0 +1,122 @@
+{
+  "PAG IMPOSTOS FEDERAIS": {
+    "primeira_vez": "2025-06-02",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      22000.0
+    ]
+  },
+  "PAGTO FORN TRIGO SUL COMERCIO": {
+    "primeira_vez": "2025-06-02",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      12500.0,
+      12500.0
+    ]
+  },
+  "PAG FORNECEDOR EMBALAGENS PLUS": {
+    "primeira_vez": "2025-06-02",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      9800.0,
+      9800.0
+    ]
+  },
+  "PAG FORN GRAOS DO SUL LTDA": {
+    "primeira_vez": "2025-06-03",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      18500.0,
+      18500.0
+    ]
+  },
+  "PAGTO FORNECEDOR NOVO LTDA": {
+    "primeira_vez": "2025-06-03",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      75000.0
+    ]
+  },
+  "PAG ALUGUEL GALPAO SANTA MARIA": {
+    "primeira_vez": "2025-06-03",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      5500.0
+    ]
+  },
+  "PAGTO ENERGIA ELETRICA RGE": {
+    "primeira_vez": "2025-06-04",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      8900.0
+    ]
+  },
+  "PAG MANUTENCAO MAQUINARIO": {
+    "primeira_vez": "2025-06-04",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      2300.0
+    ]
+  },
+  "PAG COMBUSTIVEL POSTO CENTRAL": {
+    "primeira_vez": "2025-06-05",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      4500.0
+    ]
+  },
+  "PAG FRETE TRANSPORTADORA TOP": {
+    "primeira_vez": "2025-06-05",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      6800.0
+    ]
+  },
+  "PAGTO FORN FARINHA GAUCHA SA": {
+    "primeira_vez": "2025-06-05",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      32000.0
+    ]
+  },
+  "PAGTO FOLHA SALARIOS JUNHO": {
+    "primeira_vez": "2025-06-05",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      45000.0
+    ]
+  },
+  "PAG SEGURO FROTA": {
+    "primeira_vez": "2025-06-05",
+    "meses": [
+      "2026-06"
+    ],
+    "valores": [
+      3200.0
+    ]
+  }
+}

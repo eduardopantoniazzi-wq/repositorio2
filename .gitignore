@@ -1,0 +1,7 @@
+credentials/
+data/extratos/
+data/extrato_consolidado.xlsx
+__pycache__/
+*.pyc
+*.pyo
+.env
