@@ -71,111 +71,164 @@ def _mes_nome(numero: int) -> str:
 
 def conciliar(df_prev, df_banco):
     """
-    Para cada débito PREVISTO, busca o débito bancário mais próximo
-    (mesmo valor ±10%, mesma semana, nome parecido).
-    Retorna DataFrame pronto para exibição.
+    Casamento global: monta a matriz de scores de todos os pares possíveis
+    e atribui o melhor par disponível globalmente (não guloso por linha).
+    Isso evita que dois previstos com valor parecido troquem de beneficiário.
     """
     from difflib import SequenceMatcher
     import re
-    STOP = {"nf","nota","fiscal","ltda","sa","eireli","me","epp","pag","pgto","ted","pix","de","boleto"}
+
+    STOP = {"nf","nota","fiscal","ltda","sa","eireli","me","epp","pag","pgto",
+            "ted","pix","de","boleto","pagamento","transferencia","transf"}
 
     def norm(s):
         s = re.sub(r"[^\w\s]", " ", str(s).upper())
-        return " ".join(w for w in s.split() if len(w)>2 and w.lower() not in STOP)
+        return " ".join(w for w in s.split() if len(w) > 2 and w.lower() not in STOP)
 
-    def sim(a, b):
+    def sim_nome(a, b):
         na, nb = norm(a), norm(b)
-        if not na or not nb: return 0.0
-        base = SequenceMatcher(None, na, nb).ratio()
-        return max(base, 0.6) if set(na.split()) & set(nb.split()) else base
+        if not na or not nb:
+            return 0.0
+        palavras_a = set(na.split())
+        palavras_b = set(nb.split())
+        seq = SequenceMatcher(None, na, nb).ratio()
+        # Qualquer palavra em comum já eleva bastante o score
+        comuns = palavras_a & palavras_b
+        if comuns:
+            return max(seq, 0.55 + 0.1 * min(len(comuns), 3))
+        return seq
 
     deb_banco = df_banco[df_banco["debito"] > 0].copy().reset_index(drop=True)
     deb_prev  = df_prev[df_prev["debito"] > 0].copy().reset_index(drop=True)
-    deb_banco["_usado"] = False
 
-    linhas = []
+    nP = len(deb_prev)
+    nB = len(deb_banco)
 
-    # ── Cruza cada previsto com o melhor candidato bancário ──────────────
-    for _, prev in deb_prev.iterrows():
-        melhor_idx, melhor_score = None, 0.0
-        for idx, deb in deb_banco[~deb_banco["_usado"]].iterrows():
+    # ── Monta matriz de scores (nP × nB) ────────────────────────────────
+    scores = {}   # (ip, ib) -> score
+    for ip, prev in deb_prev.iterrows():
+        for ib, deb in deb_banco.iterrows():
             diff_val = abs(deb["debito"] - prev["debito"]) / max(prev["debito"], 1)
-            if diff_val > 0.50: continue
+            if diff_val > 0.60:
+                continue
             try:
                 diff_dias = abs((deb["data"] - prev["data"]).days)
             except Exception:
                 diff_dias = 999
-            if diff_dias > 5: continue
-            score = (max(0, 1-diff_val/0.5)*0.60 +
-                     sim(prev["descricao"], deb["descricao"])*0.25 +
-                     max(0, 1-diff_dias/6)*0.15)
-            if score > melhor_score:
-                melhor_score, melhor_idx = score, idx
+            if diff_dias > 5:
+                continue
 
-        if melhor_idx is not None and melhor_score >= 0.35:
-            deb = deb_banco.loc[melhor_idx]
-            deb_banco.at[melhor_idx, "_usado"] = True
+            s_val  = max(0.0, 1 - diff_val / 0.60)
+            s_nome = sim_nome(prev["descricao"], deb["descricao"])
+            s_data = max(0.0, 1 - diff_dias / 6)
+
+            # Nome tem peso maior que valor — evita trocar beneficiários
+            score = s_nome * 0.50 + s_val * 0.35 + s_data * 0.15
+
+            # Descarta pares sem nenhuma afinidade de nome E valor muito diferente
+            if s_nome < 0.20 and diff_val > 0.10:
+                continue
+
+            scores[(ip, ib)] = score
+
+    # ── Casamento global: atribui pares por ordem de melhor score ────────
+    pares_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    usados_prev  = set()
+    usados_banco = set()
+    atribuicoes  = {}   # ip -> (ib, score)
+
+    for (ip, ib), score in pares_ordenados:
+        if ip in usados_prev or ib in usados_banco:
+            continue
+        if score < 0.30:
+            break
+        atribuicoes[ip] = (ib, score)
+        usados_prev.add(ip)
+        usados_banco.add(ib)
+
+    # ── Monta linhas da tabela ───────────────────────────────────────────
+    linhas = []
+
+    for ip, prev in deb_prev.iterrows():
+        if ip in atribuicoes:
+            ib, score = atribuicoes[ip]
+            deb  = deb_banco.loc[ib]
             diff = round(deb["debito"] - prev["debito"], 2)
             pct  = diff / prev["debito"] * 100 if prev["debito"] else 0
-            if abs(diff) <= prev["debito"] * 0.02:
+            s_nome = sim_nome(prev["descricao"], deb["descricao"])
+
+            if abs(diff) <= prev["debito"] * 0.02 and s_nome >= 0.40:
                 status = "✅ OK"
+            elif abs(diff) > prev["debito"] * 0.02 and s_nome >= 0.40:
+                status = "⚠️ VALOR DIFERENTE"
+            elif abs(diff) <= prev["debito"] * 0.02 and s_nome < 0.40:
+                status = "⚠️ BENEFICIÁRIO DIFERENTE"
             else:
-                status = f"⚠️ DIVERGÊNCIA"
+                status = "⚠️ DIVERGÊNCIA"
+
             linhas.append({
-                "Status":              status,
-                "Data Prevista":       prev["data"],
-                "Beneficiário Previsto": prev["descricao"],
-                "Valor Previsto (R$)": prev["debito"],
-                "Data Pago":           deb["data"],
-                "Banco":               deb["banco"],
-                "Pago Para":           deb["descricao"],
-                "Valor Pago (R$)":     deb["debito"],
-                "Diferença (R$)":      diff,
-                "Diferença (%)":       round(pct, 1),
+                "Status":                  status,
+                "Data Prevista":           prev["data"],
+                "Beneficiário Previsto":   prev["descricao"],
+                "Valor Previsto (R$)":     prev["debito"],
+                "Data Pago":               deb["data"],
+                "Banco":                   deb["banco"],
+                "Pago Para":               deb["descricao"],
+                "Valor Pago (R$)":         deb["debito"],
+                "Diferença (R$)":          diff,
+                "Diferença (%)":           round(pct, 1),
             })
         else:
             linhas.append({
-                "Status":              "🕐 NÃO PAGO",
-                "Data Prevista":       prev["data"],
-                "Beneficiário Previsto": prev["descricao"],
-                "Valor Previsto (R$)": prev["debito"],
-                "Data Pago":           None,
-                "Banco":               "",
-                "Pago Para":           "",
-                "Valor Pago (R$)":     None,
-                "Diferença (R$)":      -prev["debito"],
-                "Diferença (%)":       -100.0,
+                "Status":                  "🕐 NÃO PAGO",
+                "Data Prevista":           prev["data"],
+                "Beneficiário Previsto":   prev["descricao"],
+                "Valor Previsto (R$)":     prev["debito"],
+                "Data Pago":               None,
+                "Banco":                   "",
+                "Pago Para":               "",
+                "Valor Pago (R$)":         None,
+                "Diferença (R$)":          -prev["debito"],
+                "Diferença (%)":           -100.0,
             })
 
-    # ── Débitos bancários sem correspondência ────────────────────────────
-    for _, deb in deb_banco[~deb_banco["_usado"]].iterrows():
+    # ── Débitos bancários sem par = não previstos ────────────────────────
+    OPERACIONAL = ["TARIFA","IOF","JUROS","TAXA","INSS","FGTS","SALDO","RENTAB",
+                   "FACILCRED","RENDE FACIL","DEBITO SERV"]
+    for ib, deb in deb_banco.iterrows():
+        if ib in usados_banco:
+            continue
         desc = str(deb["descricao"]).upper()
-        operacional = any(p in desc for p in ["TARIFA","IOF","JUROS","TAXA","INSS","FGTS"])
-        if operacional:
-            continue   # ignora tarifas e impostos automáticos
+        if any(p in desc for p in OPERACIONAL):
+            continue
         linhas.append({
-            "Status":              "🚨 NÃO PREVISTO",
-            "Data Prevista":       None,
-            "Beneficiário Previsto": "",
-            "Valor Previsto (R$)": None,
-            "Data Pago":           deb["data"],
-            "Banco":               deb["banco"],
-            "Pago Para":           deb["descricao"],
-            "Valor Pago (R$)":     deb["debito"],
-            "Diferença (R$)":      deb["debito"],
-            "Diferença (%)":       None,
+            "Status":                  "🚨 NÃO PREVISTO",
+            "Data Prevista":           None,
+            "Beneficiário Previsto":   "",
+            "Valor Previsto (R$)":     None,
+            "Data Pago":               deb["data"],
+            "Banco":                   deb["banco"],
+            "Pago Para":               deb["descricao"],
+            "Valor Pago (R$)":         deb["debito"],
+            "Diferença (R$)":          deb["debito"],
+            "Diferença (%)":           None,
         })
 
-    df = pd.DataFrame(linhas)
-    return df
+    return pd.DataFrame(linhas)
 
 
 def cor_linha(row):
     s = str(row.get("Status",""))
-    if s.startswith("✅"):   bg = "#d4edda; color:#155724"
-    elif s.startswith("⚠️"): bg = "#fff3cd; color:#856404"
-    elif s.startswith("🚨"): bg = "#f8d7da; color:#721c24"
-    else:                    bg = "#e2e3e5; color:#383d41"
+    if s.startswith("✅"):
+        bg = "#d4edda; color:#155724"
+    elif "BENEFICIÁRIO" in s:
+        bg = "#f8d7da; color:#721c24"   # vermelho — nome trocado é mais grave
+    elif s.startswith("⚠️"):
+        bg = "#fff3cd; color:#856404"   # amarelo — só valor diferente
+    elif s.startswith("🚨"):
+        bg = "#f8d7da; color:#721c24"
+    else:
+        bg = "#e2e3e5; color:#383d41"
     return [f"background-color:{bg}"] * len(row)
 
 
