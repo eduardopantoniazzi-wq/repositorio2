@@ -230,6 +230,79 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     return pd.DataFrame(linhas)
 
 
+def extrair_saldos(arquivo_bytes: bytes, banco: str, suffix: str) -> dict:
+    """
+    Extrai saldos diretamente do cabeçalho/rodapé do PDF de cada banco.
+    Retorna {"disponivel": float, "aplicacoes": float}
+    """
+    import re, tempfile
+    from pathlib import Path
+    RE_VAL = re.compile(r"[\d]{1,3}(?:\.\d{3})*,\d{2}")
+
+    def _val(s):
+        m = RE_VAL.search(str(s))
+        return float(m.group().replace(".", "").replace(",", ".")) if m else 0.0
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(arquivo_bytes)
+        tmp_path = Path(tmp.name)
+
+    disponivel = 0.0
+    aplicacoes = 0.0
+
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(tmp_path)) as pdf:
+            textos = [p.extract_text() or "" for p in pdf.pages]
+        texto_total = "\n".join(textos)
+
+        if banco == "Banrisul":
+            # "SALDO DISPONIVEL...........R$ 178.876,86"
+            m = re.search(r"SALDO DISPONIVEL[^0-9]+([\d.]+,\d{2})", texto_total)
+            disponivel = _val(m.group(1)) if m else 0.0
+
+        elif banco == "Bradesco":
+            # Última linha "Total xxx -xxx SALDO_CC"
+            totais = re.findall(r"Total\s+[\d.,]+\s+[\d.,\-]+\s+([\d.]+,\d{2})", texto_total)
+            disponivel = _val(totais[-1]) if totais else 0.0
+            # Invest Fácil: última ocorrência de "SALDO INVEST FÁCIL  VALOR"
+            invests = re.findall(r"SALDO INVEST\s+F[ÁA]CIL\s+([\d.]+,\d{2})", texto_total)
+            aplicacoes = _val(invests[-1]) if invests else 0.0
+
+        elif banco == "BB":
+            # Linha "999 S A L D O ... 639.100,99 C"
+            m = re.search(r"S\s*A\s*L\s*D\s*O\s+[\d.,]+\s*C", texto_total)
+            if m:
+                vals = RE_VAL.findall(m.group())
+                disponivel = _val(vals[-1]) if vals else 0.0
+            # BB Rende Fácil: último saldo invest
+            rf = re.findall(r"BB Rende F[áa]cil\s+([\d.]+,\d{2})", texto_total)
+            aplicacoes = _val(rf[-1]) if rf else 0.0
+
+        elif banco == "Sicredi":
+            # Último saldo de linha com data (ignora tabelas de resumo/limite)
+            RE_DATA = re.compile(r"\d{2}/\d{2}/\d{4}")
+            with pdfplumber.open(str(tmp_path)) as pdf:
+                ultimo = 0.0
+                for page in pdf.pages:
+                    tbl = page.extract_table()
+                    if not tbl:
+                        continue
+                    for row in tbl:
+                        if row and row[0] and RE_DATA.search(str(row[0])) and row[-1]:
+                            v = RE_VAL.search(str(row[-1]))
+                            if v:
+                                ultimo = _val(v.group())
+            disponivel = ultimo
+
+    except Exception:
+        pass
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return {"disponivel": disponivel, "aplicacoes": aplicacoes}
+
+
 def cor_linha(row):
     s = str(row.get("Status",""))
     if s.startswith("✅"):
@@ -304,13 +377,18 @@ if not planilha_up:
 # Lê extratos
 with st.spinner("Lendo extratos..."):
     dfs = []
+    saldos_por_banco = {}   # banco -> {"disponivel": x, "aplicacoes": y}
     for f in extratos_up:
-        df, err = ler_extrato(f.name, f.read())
+        conteudo = f.read()
+        banco = detectar_banco(f.name)
+        df, err = ler_extrato(f.name, conteudo)
         if err:
             st.warning(err)
         else:
             dfs.append(df)
             st.sidebar.success(f"✔ {f.name} ({len(df)} lançamentos)")
+            if banco and f.name.lower().endswith(".pdf"):
+                saldos_por_banco[banco] = extrair_saldos(conteudo, banco, Path(f.name).suffix)
 
 if not dfs:
     st.error("Nenhum extrato lido. Verifique os nomes dos arquivos.")
@@ -352,15 +430,27 @@ st.info(f"📅 Mostrando: **{periodo_label}** — "
 
 # Saldos
 st.subheader("💰 Saldos dos Bancos")
-cols = st.columns(5)
-total = 0.0
 bancos = ["Bradesco","Sicredi","BB","Banrisul"]
+total_disp = 0.0
+total_aplic = 0.0
+cols = st.columns(len(bancos) + 1)
 for i, b in enumerate(bancos):
-    sub = df_banco[df_banco["banco"]==b]["saldo"]
-    s = float(sub.iloc[-1]) if not sub.empty else 0.0
-    total += s
-    cols[i].metric(b, fmt_brl(s))
-cols[4].metric("**TOTAL**", fmt_brl(total))
+    if b in saldos_por_banco:
+        disp  = saldos_por_banco[b]["disponivel"]
+        aplic = saldos_por_banco[b]["aplicacoes"]
+    else:
+        sub  = df_banco[df_banco["banco"]==b]["saldo"]
+        disp = float(sub.iloc[-1]) if not sub.empty else 0.0
+        aplic = 0.0
+    total_disp  += disp
+    total_aplic += aplic
+    label = fmt_brl(disp)
+    delta = f"+ {fmt_brl(aplic)} aplic." if aplic > 0 else None
+    cols[i].metric(b, label, delta=delta, delta_color="off")
+
+cols[-1].metric("**TOTAL DISPONÍVEL**", fmt_brl(total_disp),
+                delta=f"+ {fmt_brl(total_aplic)} em aplicações" if total_aplic > 0 else None,
+                delta_color="off")
 
 # Concilia
 with st.spinner("Comparando previstos × efetivados..."):
