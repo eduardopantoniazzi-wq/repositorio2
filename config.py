@@ -18,7 +18,7 @@ GOOGLE_CREDENTIALS_FILE = CREDENTIALS_DIR / "google_credentials.json"
 
 # ID da planilha (a parte entre /d/ e /edit na URL do Google Sheets).
 # Deixe vazio para criar uma nova planilha automaticamente.
-GOOGLE_SHEET_ID = ""
+GOOGLE_SHEET_ID = "11-x3mDnzb7f_rGI0FgYI_mCdI3JHsYDHJAriLzSS7M4"
 
 # Nome da planilha (usado ao criar nova)
 GOOGLE_SHEET_NAME = "Controle Financeiro - Moinho"
