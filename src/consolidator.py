@@ -11,6 +11,7 @@ import pandas as pd
 from .readers.bradesco import LeitorBradesco
 from .readers.sicredi import LeitorSicredi
 from .readers.bb import LeitorBB
+from .readers.banrisul import LeitorBanrisul
 from .readers.planilha import ler_planilha
 
 
@@ -20,6 +21,7 @@ _LEITORES = {
     "bb":       LeitorBB,
     "bancodobrasil": LeitorBB,
     "banco_do_brasil": LeitorBB,
+    "banrisul": LeitorBanrisul,
 }
 
 _SUFIXOS_BANCO = {".pdf", ".csv", ".xlsx", ".xls"}

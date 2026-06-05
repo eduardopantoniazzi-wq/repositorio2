@@ -32,6 +32,8 @@ def _detectar_banco(nome: str) -> str:
         return "Bradesco"
     if "sicredi" in n:
         return "Sicredi"
+    if "banrisul" in n:
+        return "Banrisul"
     if n.startswith("bb") or "banco_brasil" in n or "bancobrasil" in n or "_bb" in n:
         return "BB"
     return None
@@ -47,9 +49,11 @@ def processar_arquivos(extratos_up, planilha_up, meses_sel):
     from src.readers.bradesco import LeitorBradesco
     from src.readers.sicredi import LeitorSicredi
     from src.readers.bb import LeitorBB
+    from src.readers.banrisul import LeitorBanrisul
     from src.readers.planilha import ler_planilha
 
-    LEITORES = {"Bradesco": LeitorBradesco, "Sicredi": LeitorSicredi, "BB": LeitorBB}
+    LEITORES = {"Bradesco": LeitorBradesco, "Sicredi": LeitorSicredi,
+                "BB": LeitorBB, "Banrisul": LeitorBanrisul}
 
     dfs_banco = []
     erros = []
