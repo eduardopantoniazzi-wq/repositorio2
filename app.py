@@ -17,6 +17,7 @@ st.set_page_config(page_title="Controle Anti-Desvio — Moinho de Trigo",
 
 _MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
           "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+_MESES_NUM = {m: f"{i+1:02d}" for i, m in enumerate(_MESES)}
 
 BANCO_POR_NOME = {
     "bradesco": "Bradesco", "sicredi": "Sicredi",
@@ -63,6 +64,10 @@ def ler_planilha(conteudo, meses):
         return None, f"Erro ao ler planilha: {e}"
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+def _mes_nome(numero: int) -> str:
+    return _MESES[numero - 1]
 
 def conciliar(df_prev, df_banco):
     """
@@ -184,7 +189,7 @@ def fmt_dt(v):
 
 # ─────────────────────────────────────────────────────────────────────────────
 st.title("🌾 Débitos Previstos × Efetivados")
-st.caption("Moinho de Trigo — compara o que estava previsto na planilha com o que saiu dos bancos")
+st.caption("Moinho de Trigo — comparação diária: o que estava previsto na planilha vs o que saiu dos bancos")
 
 # Sidebar
 with st.sidebar:
@@ -195,9 +200,12 @@ with st.sidebar:
         type=["xlsx","xls"])
     st.caption("Nomeie: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · banrisul_*.pdf")
     st.divider()
-    mes_atual = _MESES[datetime.now().month-1]
-    mes_ant   = _MESES[datetime.now().month-2] if datetime.now().month>1 else "Dezembro"
-    meses_sel = st.multiselect("Meses", _MESES, default=[mes_ant, mes_atual])
+    data_sel = st.date_input("📅 Data do extrato", value=datetime.now().date())
+    mostrar_periodo = st.toggle("Ver período (mais de um dia)", value=False)
+    if mostrar_periodo:
+        data_fim = st.date_input("Até", value=datetime.now().date())
+    else:
+        data_fim = data_sel
     rodar = st.button("▶ Comparar", type="primary", use_container_width=True)
 
 if not rodar:
@@ -242,12 +250,37 @@ if not dfs:
 
 df_banco = pd.concat(dfs, ignore_index=True)
 
+# Determina meses necessários a partir das datas selecionadas
+meses_necessarios = list({_mes_nome(d.month)
+                          for d in pd.date_range(data_sel, data_fim, freq="MS").date.tolist()
+                          or [data_sel]})
+if not meses_necessarios:
+    meses_necessarios = [_mes_nome(data_sel.month)]
+
 # Lê planilha
 with st.spinner("Lendo planilha de previsões..."):
-    df_prev, err = ler_planilha(planilha_up.read(), meses=meses_sel or None)
+    df_prev, err = ler_planilha(planilha_up.read(), meses=meses_necessarios)
     if err:
         st.error(err); st.stop()
     st.sidebar.success(f"✔ {planilha_up.name} ({len(df_prev)} lançamentos)")
+
+# Filtra pelo intervalo de datas
+data_ini_ts = pd.Timestamp(data_sel)
+data_fim_ts = pd.Timestamp(data_fim)
+
+df_banco = df_banco[(df_banco["data"] >= data_ini_ts) & (df_banco["data"] <= data_fim_ts)].copy()
+df_prev  = df_prev[(df_prev["data"]  >= data_ini_ts) & (df_prev["data"]  <= data_fim_ts)].copy()
+
+if df_banco.empty and df_prev.empty:
+    st.warning(f"Nenhum lançamento encontrado para {data_sel.strftime('%d/%m/%Y')}. "
+               "Verifique se a data bate com os extratos enviados.")
+    st.stop()
+
+periodo_label = (data_sel.strftime("%d/%m/%Y") if data_sel == data_fim
+                 else f"{data_sel.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
+st.info(f"📅 Mostrando: **{periodo_label}** — "
+        f"{len(df_banco[df_banco['debito']>0])} débitos bancários · "
+        f"{len(df_prev[df_prev['debito']>0])} previstos")
 
 # Saldos
 st.subheader("💰 Saldos dos Bancos")
