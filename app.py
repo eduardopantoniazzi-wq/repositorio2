@@ -69,7 +69,7 @@ def ler_planilha(conteudo, meses):
 def _mes_nome(numero: int) -> str:
     return _MESES[numero - 1]
 
-def conciliar(df_prev, df_banco):
+def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     """
     Casamento global: monta a matriz de scores de todos os pares possíveis
     e atribui o melhor par disponível globalmente (não guloso por linha).
@@ -146,6 +146,8 @@ def conciliar(df_prev, df_banco):
         usados_prev.add(ip)
         usados_banco.add(ib)
 
+    LIMITE_ALERTA = float(limite_alerta)
+
     # ── Monta linhas da tabela ───────────────────────────────────────────
     linhas = []
 
@@ -166,8 +168,15 @@ def conciliar(df_prev, df_banco):
             else:
                 status = "⚠️ DIVERGÊNCIA"
 
+            # Alerta crítico: diferença > R$1.500 ou beneficiário diferente com valor alto
+            if abs(diff) > LIMITE_ALERTA or (s_nome < 0.40 and deb["debito"] > LIMITE_ALERTA):
+                alerta = f"🔴 ATENÇÃO — diferença de R$ {abs(diff):,.2f}"
+            else:
+                alerta = ""
+
             linhas.append({
                 "Status":                  status,
+                "🔴 Alerta":               alerta,
                 "Data Prevista":           prev["data"],
                 "Beneficiário Previsto":   prev["descricao"],
                 "Valor Previsto (R$)":     prev["debito"],
@@ -181,6 +190,7 @@ def conciliar(df_prev, df_banco):
         else:
             linhas.append({
                 "Status":                  "🕐 NÃO PAGO",
+                "🔴 Alerta":               "",
                 "Data Prevista":           prev["data"],
                 "Beneficiário Previsto":   prev["descricao"],
                 "Valor Previsto (R$)":     prev["debito"],
@@ -201,8 +211,10 @@ def conciliar(df_prev, df_banco):
         desc = str(deb["descricao"]).upper()
         if any(p in desc for p in OPERACIONAL):
             continue
+        alerta_nao_prev = f"🔴 ATENÇÃO — R$ {deb['debito']:,.2f} fora da planilha" if deb["debito"] > LIMITE_ALERTA else ""
         linhas.append({
             "Status":                  "🚨 NÃO PREVISTO",
+            "🔴 Alerta":               alerta_nao_prev,
             "Data Prevista":           None,
             "Beneficiário Previsto":   "",
             "Valor Previsto (R$)":     None,
@@ -259,6 +271,8 @@ with st.sidebar:
         data_fim = st.date_input("Até", value=datetime.now().date())
     else:
         data_fim = data_sel
+    limite_alerta = st.number_input("🔴 Alertar diferenças acima de (R$)",
+                                    min_value=0, value=1500, step=500)
     rodar = st.button("▶ Comparar", type="primary", use_container_width=True)
 
 if not rodar:
@@ -349,7 +363,7 @@ cols[4].metric("**TOTAL**", fmt_brl(total))
 
 # Concilia
 with st.spinner("Comparando previstos × efetivados..."):
-    df_res = conciliar(df_prev, df_banco)
+    df_res = conciliar(df_prev, df_banco, limite_alerta=limite_alerta)
 
 # Métricas
 st.subheader("📊 Resumo")
@@ -400,13 +414,14 @@ st.dataframe(
     use_container_width=True,
     height=620,
     column_config={
-        "Status":                  st.column_config.TextColumn(width=160),
+        "Status":                  st.column_config.TextColumn(width=200),
+        "🔴 Alerta":               st.column_config.TextColumn(width=280),
         "Data Prevista":           st.column_config.TextColumn("Data Prev.", width=100),
-        "Beneficiário Previsto":   st.column_config.TextColumn("Previsto Para", width=240),
+        "Beneficiário Previsto":   st.column_config.TextColumn("Previsto Para", width=230),
         "Valor Previsto (R$)":     st.column_config.TextColumn("Vlr Previsto", width=130),
         "Data Pago":               st.column_config.TextColumn("Data Pago", width=100),
         "Banco":                   st.column_config.TextColumn(width=90),
-        "Pago Para":               st.column_config.TextColumn(width=250),
+        "Pago Para":               st.column_config.TextColumn(width=230),
         "Valor Pago (R$)":         st.column_config.TextColumn("Vlr Pago", width=130),
         "Diferença (R$)":          st.column_config.TextColumn("Diferença R$", width=120),
         "Diferença (%)":           st.column_config.TextColumn("Diferença %", width=100),
