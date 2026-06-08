@@ -18,10 +18,16 @@ from .readers.planilha import ler_planilha
 _LEITORES = {
     "bradesco": LeitorBradesco,
     "sicredi":  LeitorSicredi,
-    "bb":       LeitorBB,
-    "bancodobrasil": LeitorBB,
+    "bbalimentos":    LeitorBB,
+    "bb":             LeitorBB,
+    "bancodobrasil":  LeitorBB,
     "banco_do_brasil": LeitorBB,
     "banrisul": LeitorBanrisul,
+}
+
+# Mapeamento de chave interna → label que será gravado na coluna "banco"
+_LABEL_BANCO = {
+    "bbalimentos": "BB Alimentos",
 }
 
 _SUFIXOS_BANCO = {".pdf", ".csv", ".xlsx", ".xls"}
@@ -69,8 +75,11 @@ def consolidar(
                 Leitor = _LEITORES[chave]
                 try:
                     df = Leitor(arq).ler()
+                    if chave in _LABEL_BANCO:
+                        df["banco"] = _LABEL_BANCO[chave]
                     frames.append(df)
-                    print(f"  ✔ {arq.name} → {Leitor.BANCO} ({len(df)} lançamentos)")
+                    label = _LABEL_BANCO.get(chave, Leitor.BANCO)
+                    print(f"  ✔ {arq.name} → {label} ({len(df)} lançamentos)")
                 except Exception as e:
                     erros.append(f"{arq.name}: {e}")
             else:

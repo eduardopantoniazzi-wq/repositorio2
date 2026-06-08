@@ -21,7 +21,9 @@ _MESES_NUM = {m: f"{i+1:02d}" for i, m in enumerate(_MESES)}
 
 BANCO_POR_NOME = {
     "bradesco": "Bradesco", "sicredi": "Sicredi",
-    "banrisul": "Banrisul", "bb": "BB",
+    "banrisul": "Banrisul",
+    "bb_alimentos": "BB Alimentos", "bbalimentos": "BB Alimentos",
+    "bb": "BB",
 }
 
 def detectar_banco(nome):
@@ -37,10 +39,10 @@ def ler_extrato(nome, conteudo):
     from src.readers.bb       import LeitorBB
     from src.readers.banrisul import LeitorBanrisul
     LEITORES = {"Bradesco": LeitorBradesco, "Sicredi": LeitorSicredi,
-                "BB": LeitorBB, "Banrisul": LeitorBanrisul}
+                "BB": LeitorBB, "BB Alimentos": LeitorBB, "Banrisul": LeitorBanrisul}
     banco = detectar_banco(nome)
     if not banco:
-        return None, f"'{nome}' não reconhecido — renomeie com bradesco/sicredi/bb/banrisul no início"
+        return None, f"'{nome}' não reconhecido — renomeie com bradesco/sicredi/bb/bb_alimentos/banrisul no início"
     suffix = Path(nome).suffix
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(conteudo); tmp_path = Path(tmp.name)
@@ -265,7 +267,7 @@ with st.sidebar:
         type=["pdf","xlsx","xls","csv"], accept_multiple_files=True)
     planilha_up = st.file_uploader("Planilha de previsões (FC)",
         type=["xlsx","xls"])
-    st.caption("Nomeie: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · banrisul_*.pdf")
+    st.caption("Nomeie: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
     st.divider()
     data_sel = st.date_input("📅 Data do extrato", value=datetime.now().date())
     mostrar_periodo = st.toggle("Ver período (mais de um dia)", value=False)
@@ -353,9 +355,10 @@ st.info(f"📅 Mostrando: **{periodo_label}** — "
 
 # Saldos
 st.subheader("💰 Saldos dos Bancos")
-bancos = ["Bradesco","Sicredi","BB","Banrisul"]
-cols = st.columns(len(bancos) + 1)
-for i, b in enumerate(bancos):
+bancos_presentes = [b for b in ["Bradesco","Sicredi","BB","BB Alimentos","Banrisul"]
+                    if not df_banco[df_banco["banco"] == b].empty]
+cols = st.columns(len(bancos_presentes) + 1)
+for i, b in enumerate(bancos_presentes):
     sub = df_banco[df_banco["banco"] == b]["saldo"]
     s = float(sub.iloc[-1]) if not sub.empty else 0.0
     cols[i].metric(b, fmt_brl(s))
