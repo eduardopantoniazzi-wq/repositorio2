@@ -28,11 +28,16 @@ BANCO_POR_NOME = {
 
 # Palavras que identificam o arquivo de Consulta Operações do Banrisul
 _CONSULTA_BANRISUL = ("banrisul_consulta", "consulta_banrisul",
+                      "banrisul consulta", "consulta banrisul",
                       "banrisul_operacoes", "operacoes_banrisul",
-                      "consulta_operacoes")
+                      "banrisul operacoes", "operacoes banrisul",
+                      "consulta_operacoes", "consulta operacoes")
 
 def eh_consulta_banrisul(nome: str) -> bool:
     n = nome.lower()
+    # Qualquer arquivo com "banrisul" E "consulta" no nome
+    if "banrisul" in n and "consulta" in n:
+        return True
     return any(p in n for p in _CONSULTA_BANRISUL)
 
 def detectar_banco(nome):
