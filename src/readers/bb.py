@@ -114,6 +114,15 @@ class LeitorBB(LeitorBase):
             m_sld = _RE_VAL_NUM.search(sld_raw)
             saldo = _limpar_valor(m_sld.group()) if m_sld else None
 
+            # Linha "S A L D O" (00000 999 S A L D O): é o saldo final da conta,
+            # não uma transação — atualiza o saldo do último registro e descarta esta linha
+            if re.search(r"\bS\s*A\s*L\s*D\s*O\b", hist_limpo, re.IGNORECASE):
+                saldo_final = cred if cred > 0 else deb
+                if saldo_final > 0 and registros:
+                    registros[-1]["saldo"] = saldo_final
+                i += 1
+                continue
+
             if data:
                 registros.append({
                     "data": data, "descricao": descricao,
