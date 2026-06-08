@@ -110,9 +110,10 @@ class LeitorBradesco(LeitorBase):
             "net empresa", "data da operação", "últimos lançamentos",
         }
 
-        # Palavras que indicam seção de investimentos — ignorar tudo após detectar
-        _SECAO_INVEST = {"saldos invest", "invest fácil", "invest facil",
-                         "saldo invest", "aplicação", "cdb", "lci", "lca"}
+        # Palavras que identificam linhas de saldo de investimento (não são transações)
+        _INVEST_BALANCE = ("saldo invest fácil", "saldo invest facil",
+                           "saldo invest plus", "saldo rende facil",
+                           "saldo rende fácil")
 
         def eh_controle(linha: str) -> bool:
             l = linha.strip().lower()
@@ -123,21 +124,17 @@ class LeitorBradesco(LeitorBase):
                     return True
             return False
 
-        def eh_secao_invest(linha: str) -> bool:
+        def eh_linha_invest(linha: str) -> bool:
             l = linha.strip().lower()
-            return any(p in l for p in _SECAO_INVEST)
+            return any(p in l for p in _INVEST_BALANCE)
 
         i = 0
-        secao_invest = False   # flag: entrou na seção de investimentos
         while i < len(linhas):
             linha = linhas[i]
             linha_strip = linha.strip()
 
-            # Detecta início da seção "Saldos Invest Fácil / Plus" e para de processar transações
-            if eh_secao_invest(linha_strip):
-                secao_invest = True
-
-            if secao_invest:
+            # Pula linhas de saldo de investimento (ex: "SALDO INVEST FÁCIL 75.200,42")
+            if eh_linha_invest(linha_strip):
                 i += 1
                 continue
 
