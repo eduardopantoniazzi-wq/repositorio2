@@ -83,26 +83,9 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     STOP = {"nf","nota","fiscal","ltda","sa","eireli","me","epp","pag","pgto",
             "ted","pix","de","boleto","pagamento","transferencia","transf"}
 
-    # Descrições genéricas que não identificam o fornecedor
-    _GENERICOS = {
-        "pgto boleto","pag boleto","pagamento boleto","boleto bancario","boleto",
-        "ted","transferencia enviada","transf enviada","pix enviado","pix",
-        "debito automatico","debito em conta","pagamento fornecedor",
-        "cobranca","liquidacao cobranca","doc enviado",
-    }
-
     def norm(s):
         s = re.sub(r"[^\w\s]", " ", str(s).upper())
         return " ".join(w for w in s.split() if len(w) > 2 and w.lower() not in STOP)
-
-    def eh_generico(s):
-        """Retorna True se a descrição não carrega nome de fornecedor."""
-        n = norm(s)
-        if not n:
-            return True
-        # Verifica se o texto inteiro (sem stop words) bate com padrão genérico
-        raw = re.sub(r"[^\w\s]", " ", str(s).lower()).strip()
-        return any(g in raw for g in _GENERICOS)
 
     def sim_nome(a, b):
         na, nb = norm(a), norm(b)
@@ -111,6 +94,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         palavras_a = set(na.split())
         palavras_b = set(nb.split())
         seq = SequenceMatcher(None, na, nb).ratio()
+        # Qualquer palavra em comum já eleva bastante o score
         comuns = palavras_a & palavras_b
         if comuns:
             return max(seq, 0.55 + 0.1 * min(len(comuns), 3))
@@ -127,36 +111,27 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     for ip, prev in deb_prev.iterrows():
         for ib, deb in deb_banco.iterrows():
             diff_val = abs(deb["debito"] - prev["debito"]) / max(prev["debito"], 1)
+            if diff_val > 0.60:
+                continue
             try:
                 diff_dias = abs((deb["data"] - prev["data"]).days)
             except Exception:
                 diff_dias = 999
+            if diff_dias > 5:
+                continue
 
-            generico = eh_generico(deb["descricao"])
+            s_val  = max(0.0, 1 - diff_val / 0.60)
+            s_nome = sim_nome(prev["descricao"], deb["descricao"])
+            s_data = max(0.0, 1 - diff_dias / 6)
 
-            if generico:
-                # Descrição genérica (ex: "PGTO BOLETO"): casa por valor+data
-                # com tolerância menor para evitar falsos positivos
-                if diff_val > 0.05:   # valor deve bater em até 5%
-                    continue
-                if diff_dias > 3:     # data deve bater em até 3 dias
-                    continue
-                s_val  = max(0.0, 1 - diff_val / 0.05)
-                s_data = max(0.0, 1 - diff_dias / 4)
-                score  = s_val * 0.75 + s_data * 0.25
-            else:
-                # Descrição com nome identificável: comportamento original
-                if diff_val > 0.60:
-                    continue
-                if diff_dias > 5:
-                    continue
-                s_val  = max(0.0, 1 - diff_val / 0.60)
-                s_nome = sim_nome(prev["descricao"], deb["descricao"])
-                s_data = max(0.0, 1 - diff_dias / 6)
-                # Descarta pares sem afinidade de nome E valor muito diferente
-                if s_nome < 0.20 and diff_val > 0.10:
-                    continue
-                score = s_nome * 0.50 + s_val * 0.35 + s_data * 0.15
+            # Nome tem peso maior que valor — evita trocar beneficiários
+            score = s_nome * 0.50 + s_val * 0.35 + s_data * 0.15
+
+            # Descarta pares sem nenhuma afinidade de nome E valor muito diferente
+            if s_nome < 0.20 and diff_val > 0.10:
+                continue
+
+            scores[(ip, ib)] = score
 
     # ── Casamento global: atribui pares por ordem de melhor score ────────
     pares_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
