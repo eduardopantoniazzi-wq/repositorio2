@@ -170,11 +170,9 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             else:
                 status = "⚠️ DIVERGÊNCIA"
 
-            # Alerta sempre que houver qualquer diferença de valor ou beneficiário
-            if "VALOR" in status or "DIVERGÊNCIA" in status:
+            # Alerta somente quando há diferença de valor (independente do beneficiário)
+            if abs(diff) > 0.01:
                 alerta = f"🔴 Diferença de R$ {abs(diff):,.2f}"
-            elif "BENEFICIÁRIO" in status:
-                alerta = f"🔴 Beneficiário divergente — R$ {deb['debito']:,.2f} pago"
             else:
                 alerta = ""
 
