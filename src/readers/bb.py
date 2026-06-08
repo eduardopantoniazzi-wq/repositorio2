@@ -114,13 +114,24 @@ class LeitorBB(LeitorBase):
             m_sld = _RE_VAL_NUM.search(sld_raw)
             saldo = _limpar_valor(m_sld.group()) if m_sld else None
 
-            # Linha "S A L D O" (00000 999 S A L D O): é o saldo final da conta,
-            # não uma transação — atualiza o saldo do último registro e descarta esta linha.
-            # O valor pode estar em col 6 (cred/deb) ou col 7 (saldo), dependendo do banco.
+            # Linha "S A L D O" (00000 999 S A L D O): saldo final da conta.
+            # O valor pode estar em col 6 (valor) ou col 7 (saldo).
             if re.search(r"\bS\s*A\s*L\s*D\s*O\b", hist_limpo, re.IGNORECASE):
                 saldo_final = cred if cred > 0 else (deb if deb > 0 else (saldo or 0))
-                if saldo_final and saldo_final > 0 and registros:
-                    registros[-1]["saldo"] = saldo_final
+                if saldo_final and saldo_final > 0:
+                    # Atualiza saldo do último registro real
+                    if registros:
+                        registros[-1]["saldo"] = saldo_final
+                    # Adiciona linha especial de saldo final (sem crédito/débito)
+                    # para que app.py consiga encontrá-la como último saldo não-zero
+                    registros.append({
+                        "data":      data or (registros[-1]["data"] if registros else "01/01/2000"),
+                        "descricao": "SALDO FINAL",
+                        "documento": "",
+                        "credito":   0.0,
+                        "debito":    0.0,
+                        "saldo":     saldo_final,
+                    })
                 i += 1
                 continue
 
