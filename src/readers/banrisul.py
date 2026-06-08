@@ -79,9 +79,14 @@ class LeitorBanrisul(LeitorBase):
             # ── Saldo na data ─────────────────────────────────────────────────
             m_saldo = _RE_SALDO_DIA.search(linha)
             if m_saldo:
-                _salvar(pendente)
-                pendente = None
                 saldo_corrente = _limpar_valor(m_saldo.group(1))
+                # Corrige o saldo do último registro já salvo com o valor exato do extrato
+                if pendente:
+                    pendente["saldo"] = saldo_corrente
+                    _salvar(pendente)
+                    pendente = None
+                elif registros:
+                    registros[-1]["saldo"] = saldo_corrente
                 continue
 
             # ── Linha NOME: do beneficiário ───────────────────────────────────

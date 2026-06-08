@@ -21,7 +21,9 @@ _MESES_NUM = {m: f"{i+1:02d}" for i, m in enumerate(_MESES)}
 
 BANCO_POR_NOME = {
     "bradesco": "Bradesco", "sicredi": "Sicredi",
-    "banrisul": "Banrisul", "bb_alimentos": "BB Alimentos", "bb": "BB",
+    "banrisul": "Banrisul",
+    "bb_alimentos": "BB Alimentos", "bbalimentos": "BB Alimentos",
+    "bb": "BB",
 }
 
 def detectar_banco(nome):
@@ -353,9 +355,10 @@ st.info(f"📅 Mostrando: **{periodo_label}** — "
 
 # Saldos
 st.subheader("💰 Saldos dos Bancos")
-bancos = ["Bradesco","Sicredi","BB","BB Alimentos","Banrisul"]
-cols = st.columns(len(bancos) + 1)
-for i, b in enumerate(bancos):
+bancos_presentes = [b for b in ["Bradesco","Sicredi","BB","BB Alimentos","Banrisul"]
+                    if not df_banco[df_banco["banco"] == b].empty]
+cols = st.columns(len(bancos_presentes) + 1)
+for i, b in enumerate(bancos_presentes):
     sub = df_banco[df_banco["banco"] == b]["saldo"]
     s = float(sub.iloc[-1]) if not sub.empty else 0.0
     cols[i].metric(b, fmt_brl(s))
