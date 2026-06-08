@@ -361,11 +361,7 @@ bancos_presentes = [b for b in ["Bradesco","Sicredi","BB","BB Alimentos","Banris
 cols = st.columns(len(bancos_presentes) + 1)
 for i, b in enumerate(bancos_presentes):
     sub_b = df_banco_full[df_banco_full["banco"] == b]
-    # Usa apenas linhas com movimento real (crédito ou débito) para evitar
-    # linhas de saldo inicial, totais ou seções de investimento
-    trans = sub_b[(sub_b["credito"] > 0) | (sub_b["debito"] > 0)]
-    sub = trans["saldo"] if not trans.empty else sub_b["saldo"]
-    sub_nz = sub[sub != 0]
+    sub_nz = sub_b["saldo"][sub_b["saldo"] != 0]
     s = float(sub_nz.iloc[-1]) if not sub_nz.empty else 0.0
     cols[i].metric(b, fmt_brl(s))
 
