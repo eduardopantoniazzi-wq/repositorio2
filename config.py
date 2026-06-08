@@ -42,7 +42,8 @@ UNIDADES = ["Santa Maria", "Canoas"]
 # Se uma conta pertence a uma unidade específica, mapeie aqui.
 # Deixe em branco para tratar tudo como empresa única.
 BANCO_UNIDADE = {
-    "Bradesco": "Santa Maria",
-    "Sicredi":  "Santa Maria",
-    "BB":       "Canoas",
+    "Bradesco":     "Santa Maria",
+    "Sicredi":      "Santa Maria",
+    "BB":           "Canoas",
+    "BB Alimentos": "Canoas",
 }
