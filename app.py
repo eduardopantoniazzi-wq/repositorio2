@@ -360,7 +360,8 @@ bancos_presentes = [b for b in ["Bradesco","Sicredi","BB","BB Alimentos","Banris
 cols = st.columns(len(bancos_presentes) + 1)
 for i, b in enumerate(bancos_presentes):
     sub = df_banco[df_banco["banco"] == b]["saldo"]
-    s = float(sub.iloc[-1]) if not sub.empty else 0.0
+    sub_nz = sub[sub != 0]
+    s = float(sub_nz.iloc[-1]) if not sub_nz.empty else 0.0
     cols[i].metric(b, fmt_brl(s))
 
 # Saldo FC da planilha para o dia selecionado

@@ -69,7 +69,9 @@ class LeitorBase:
         df["banco"]   = self.BANCO
         df["credito"] = df["credito"].apply(_limpar_valor)
         df["debito"]  = df["debito"].apply(_limpar_valor)
-        df["saldo"]   = df["saldo"].apply(_limpar_valor)
+        # Saldo: preserva None para propagar o último valor válido (forward fill)
+        df["saldo"] = df["saldo"].apply(lambda v: None if v is None else _limpar_valor(v))
+        df["saldo"] = pd.to_numeric(df["saldo"], errors="coerce").ffill().fillna(0.0)
         df["data"]    = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
         df["descricao"] = df["descricao"].astype(str).str.strip()
 
