@@ -187,3 +187,48 @@ def _ler_aba(ws, nome_aba: str) -> pd.DataFrame:
     df["data"] = pd.to_datetime(df["data"], errors="coerce")
     df["descricao"] = df["descricao"].astype(str)
     return df
+
+
+def ler_saldo_fc(
+    caminho: Union[str, Path],
+    data: "datetime | pd.Timestamp",
+) -> Optional[float]:
+    """
+    Retorna o SALDO projetado da planilha FC para uma data específica.
+    É o saldo da linha 'SALDO' do layout (caixa + aplicações previsto).
+    Retorna None se não encontrado.
+    """
+    caminho = Path(caminho)
+    wb = openpyxl.load_workbook(caminho, data_only=True)
+
+    # Descobre o nome da aba pelo mês da data
+    abas_meses = [
+        "Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+        "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro",
+    ]
+    nome_aba = abas_meses[data.month - 1]
+    if nome_aba not in wb.sheetnames:
+        return None
+
+    ws = wb[nome_aba]
+    todos_rows = list(ws.iter_rows(values_only=True))
+
+    # Linha 1: datas nas colunas pares
+    row1 = todos_rows[0]
+    col_data: Optional[int] = None
+    for col_idx, v in enumerate(row1):
+        if isinstance(v, datetime) and v.date() == data.date():
+            col_data = col_idx
+            break
+    if col_data is None:
+        return None
+
+    val_col = col_data + 1  # coluna do valor
+
+    # Procura linha "SALDO" — valor está na mesma coluna da data (col_data)
+    for row in todos_rows:
+        v0 = str(row[0]).strip().upper() if row[0] else ""
+        if v0 == "SALDO" and col_data < len(row) and row[col_data] is not None:
+            return _limpar_br(row[col_data])
+
+    return None
