@@ -111,7 +111,8 @@ class LeitorBB(LeitorBase):
             descricao = f"{hist_limpo} / {beneficiario}".strip(" /") if beneficiario else hist_limpo
 
             cred, deb = _extrair_cd(val_raw)
-            saldo = _limpar_valor(_RE_VAL_NUM.search(sld_raw).group() if _RE_VAL_NUM.search(sld_raw) else "")
+            m_sld = _RE_VAL_NUM.search(sld_raw)
+            saldo = _limpar_valor(m_sld.group()) if m_sld else None
 
             if data:
                 registros.append({
