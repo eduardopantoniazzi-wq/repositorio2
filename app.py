@@ -320,6 +320,7 @@ if not dfs:
     st.stop()
 
 df_banco = pd.concat(dfs, ignore_index=True)
+df_banco_full = df_banco.copy()  # cópia completa para cálculo de saldo (antes do filtro de data)
 
 # Determina meses necessários a partir das datas selecionadas
 meses_necessarios = list({_mes_nome(d.month)
@@ -353,13 +354,13 @@ st.info(f"📅 Mostrando: **{periodo_label}** — "
         f"{len(df_banco[df_banco['debito']>0])} débitos bancários · "
         f"{len(df_prev[df_prev['debito']>0])} previstos")
 
-# Saldos
+# Saldos — usa dataset completo (sem filtro de data) para pegar o último saldo real do arquivo
 st.subheader("💰 Saldos dos Bancos")
 bancos_presentes = [b for b in ["Bradesco","Sicredi","BB","BB Alimentos","Banrisul"]
-                    if not df_banco[df_banco["banco"] == b].empty]
+                    if not df_banco_full[df_banco_full["banco"] == b].empty]
 cols = st.columns(len(bancos_presentes) + 1)
 for i, b in enumerate(bancos_presentes):
-    sub = df_banco[df_banco["banco"] == b]["saldo"]
+    sub = df_banco_full[df_banco_full["banco"] == b]["saldo"]
     sub_nz = sub[sub != 0]
     s = float(sub_nz.iloc[-1]) if not sub_nz.empty else 0.0
     cols[i].metric(b, fmt_brl(s))
