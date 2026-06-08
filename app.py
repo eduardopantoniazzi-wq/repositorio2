@@ -26,6 +26,15 @@ BANCO_POR_NOME = {
     "bb": "BB",
 }
 
+# Palavras que identificam o arquivo de Consulta Operações do Banrisul
+_CONSULTA_BANRISUL = ("banrisul_consulta", "consulta_banrisul",
+                      "banrisul_operacoes", "operacoes_banrisul",
+                      "consulta_operacoes")
+
+def eh_consulta_banrisul(nome: str) -> bool:
+    n = nome.lower()
+    return any(p in n for p in _CONSULTA_BANRISUL)
+
 def detectar_banco(nome):
     n = nome.lower()
     for k, v in BANCO_POR_NOME.items():
@@ -265,7 +274,8 @@ with st.sidebar:
         type=["pdf","xlsx","xls","csv"], accept_multiple_files=True)
     planilha_up = st.file_uploader("Planilha de previsões (FC)",
         type=["xlsx","xls"])
-    st.caption("Nomeie: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
+    st.caption("Extratos: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
+    st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO com nome do beneficiário)")
     st.divider()
     data_sel = st.date_input("📅 Data do extrato", value=datetime.now().date())
     mostrar_periodo = st.toggle("Ver período (mais de um dia)", value=False)
@@ -302,22 +312,67 @@ if not planilha_up:
     st.error("Faça upload da planilha de previsões.")
     st.stop()
 
-# Lê extratos
+# Lê extratos e consultas de operações
 with st.spinner("Lendo extratos..."):
     dfs = []
+    dfs_consulta = []   # arquivos de Consulta Operações do Banrisul
     for f in extratos_up:
-        df, err = ler_extrato(f.name, f.read())
-        if err:
-            st.warning(err)
+        conteudo = f.read()
+        if eh_consulta_banrisul(f.name):
+            from src.readers.banrisul_consulta import ler_consulta_banrisul
+            with tempfile.NamedTemporaryFile(suffix=Path(f.name).suffix, delete=False) as tmp:
+                tmp.write(conteudo); tmp_path = Path(tmp.name)
+            try:
+                df_c = ler_consulta_banrisul(tmp_path)
+                if not df_c.empty:
+                    dfs_consulta.append(df_c)
+                    st.sidebar.success(f"✔ {f.name} ({len(df_c)} operações — consulta Banrisul)")
+            except Exception as e:
+                st.warning(f"Erro ao ler consulta Banrisul '{f.name}': {e}")
+            finally:
+                tmp_path.unlink(missing_ok=True)
         else:
-            dfs.append(df)
-            st.sidebar.success(f"✔ {f.name} ({len(df)} lançamentos)")
+            df, err = ler_extrato(f.name, conteudo)
+            if err:
+                st.warning(err)
+            else:
+                dfs.append(df)
+                st.sidebar.success(f"✔ {f.name} ({len(df)} lançamentos)")
 
 if not dfs:
     st.error("Nenhum extrato lido. Verifique os nomes dos arquivos.")
     st.stop()
 
 df_banco = pd.concat(dfs, ignore_index=True)
+
+# ── Enriquece descrições do Banrisul com nomes da Consulta Operações ────────
+if dfs_consulta:
+    df_cons = pd.concat(dfs_consulta, ignore_index=True)
+    # Lookup: (data, valor_arredondado) → fila de beneficiários
+    _lookup: dict = {}
+    for _, row in df_cons.iterrows():
+        key = (row["data"], round(row["valor"], 2))
+        _lookup.setdefault(key, []).append(row["beneficiario"])
+
+    _GENERICOS_BNR = {"pgto boleto", "pag boleto", "pagamento boleto",
+                      "debito automatico", "arrecadacao", "cobranca"}
+
+    def _enriquecer_banrisul(row):
+        if row["banco"] != "Banrisul":
+            return row["descricao"]
+        desc_low = str(row["descricao"]).lower()
+        if not any(g in desc_low for g in _GENERICOS_BNR):
+            return row["descricao"]   # já tem nome, não precisa enriquecer
+        valor = round(float(row["debito"]), 2)
+        key = (row["data"], valor)
+        fila = _lookup.get(key)
+        if fila:
+            nome = fila.pop(0)
+            return f"{row['descricao']} / {nome}"
+        return row["descricao"]
+
+    df_banco["descricao"] = df_banco.apply(_enriquecer_banrisul, axis=1)
+
 df_banco_full = df_banco.copy()  # cópia completa para cálculo de saldo (antes do filtro de data)
 
 # Determina meses necessários a partir das datas selecionadas
