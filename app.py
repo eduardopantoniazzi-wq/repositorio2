@@ -288,8 +288,6 @@ with st.sidebar:
         data_fim = st.date_input("Até", value=datetime.now().date())
     else:
         data_fim = data_sel
-    limite_alerta = st.number_input("🔴 Alertar diferenças acima de (R$)",
-                                    min_value=0, value=1500, step=500)
     rodar = st.button("▶ Comparar", type="primary", use_container_width=True)
 
 if not rodar:
@@ -451,7 +449,7 @@ cols[-1].metric("📊 Saldo FC do Dia", fmt_brl(saldo_fc) if saldo_fc is not Non
 
 # Concilia
 with st.spinner("Comparando previstos × efetivados..."):
-    df_res = conciliar(df_prev, df_banco, limite_alerta=limite_alerta)
+    df_res = conciliar(df_prev, df_banco)
 
 # Métricas
 st.subheader("📊 Resumo")
