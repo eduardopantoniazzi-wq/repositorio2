@@ -68,7 +68,6 @@ class LeitorBradesco(LeitorBase):
         registros: list[dict] = []
         data_atual = ""
         desc_acumulada: list[str] = []
-        ultimo_saldo_num: float | None = None  # rastreia saldo anterior para detectar débito/crédito
 
         # Detecta se linha tem valores financeiros (pelo menos saldo)
         def tem_valores(linha: str) -> bool:
@@ -76,29 +75,22 @@ class LeitorBradesco(LeitorBase):
 
         def extrair_valores(linha: str):
             """Extrai crédito, débito e saldo de uma linha."""
-            from .base import _limpar_valor as _lv
             vals = _RE_VALOR.findall(linha)
             if not vals:
                 return None, None, None
             saldo = vals[-1]
             # Credito/debito: se tiver 3 valores → cred, deb, saldo
-            # Se tiver 2 → (cred ou deb), saldo — usa saldo anterior para distinguir
+            # Se tiver 2 → (cred ou deb), saldo
             # Se tiver 1 → saldo anterior
             if len(vals) >= 3:
                 return vals[-3], vals[-2], saldo
             elif len(vals) == 2:
+                # Distingue crédito de débito pelo sinal
                 v = vals[-2]
                 if v.startswith("-"):
                     return None, v, saldo
-                # Usa variação do saldo para determinar débito vs crédito
-                if ultimo_saldo_num is not None:
-                    amount = _lv(v)
-                    saldo_novo = _lv(saldo)
-                    dif_deb = abs(ultimo_saldo_num - amount - saldo_novo)
-                    dif_cred = abs(ultimo_saldo_num + amount - saldo_novo)
-                    if dif_deb < dif_cred:
-                        return None, v, saldo  # débito: saldo caiu
-                return v, None, saldo  # crédito: saldo subiu (ou sem saldo anterior)
+                else:
+                    return v, None, saldo
             return None, None, saldo
 
         def extrair_dcto(linha: str) -> str:
@@ -188,11 +180,6 @@ class LeitorBradesco(LeitorBase):
                         "debito":    deb or "",
                         "saldo":     saldo,
                     })
-                    from .base import _limpar_valor as _lv2
-                    try:
-                        ultimo_saldo_num = _lv2(saldo)
-                    except Exception:
-                        pass
                 desc_acumulada = []
             else:
                 # Linha só com texto → acumula descrição
