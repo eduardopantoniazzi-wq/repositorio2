@@ -343,7 +343,7 @@ with st.spinner("Lendo extratos..."):
                 st.warning(err)
             else:
                 dfs.append(df)
-                st.sidebar.success(f"✔ {f.name} ({len(df)} lançamentos)")
+                st.sidebar.success(f"✔ {f.name} → **{df['banco'].iloc[0]}** ({len(df)} lançamentos)")
 
 if not dfs:
     st.error("Nenhum extrato lido. Verifique os nomes dos arquivos.")
