@@ -20,6 +20,7 @@ _MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
 _MESES_NUM = {m: f"{i+1:02d}" for i, m in enumerate(_MESES)}
 
 BANCO_POR_NOME = {
+    "bradesco_alimentos": "Bradesco Alimentos", "bradescalimentos": "Bradesco Alimentos",
     "bradesco": "Bradesco", "sicredi": "Sicredi",
     "banrisul": "Banrisul",
     "bb_alimentos": "BB Alimentos", "bbalimentos": "BB Alimentos",
@@ -52,11 +53,12 @@ def ler_extrato(nome, conteudo):
     from src.readers.sicredi  import LeitorSicredi
     from src.readers.bb       import LeitorBB
     from src.readers.banrisul import LeitorBanrisul
-    LEITORES = {"Bradesco": LeitorBradesco, "Sicredi": LeitorSicredi,
+    LEITORES = {"Bradesco": LeitorBradesco, "Bradesco Alimentos": LeitorBradesco,
+                "Sicredi": LeitorSicredi,
                 "BB": LeitorBB, "BB Alimentos": LeitorBB, "Banrisul": LeitorBanrisul}
     banco = detectar_banco(nome)
     if not banco:
-        return None, f"'{nome}' não reconhecido — renomeie com bradesco/sicredi/bb/bb_alimentos/banrisul no início"
+        return None, f"'{nome}' não reconhecido — renomeie com bradesco/bradesco_alimentos/sicredi/bb/bb_alimentos/banrisul no início"
     suffix = Path(nome).suffix
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(conteudo); tmp_path = Path(tmp.name)
@@ -279,7 +281,7 @@ with st.sidebar:
         type=["pdf","xlsx","xls","csv"], accept_multiple_files=True)
     planilha_up = st.file_uploader("Planilha de previsões (FC)",
         type=["xlsx","xls"])
-    st.caption("Extratos: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
+    st.caption("Extratos: bradesco_*.pdf · bradesco_alimentos_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
     st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO e transferências com nome do beneficiário)")
     st.divider()
     data_sel = st.date_input("📅 Data do extrato", value=datetime.now().date())
@@ -423,7 +425,7 @@ st.info(f"📅 Mostrando: **{periodo_label}** — "
 
 # Saldos — usa dataset completo (sem filtro de data) para pegar o último saldo real do arquivo
 st.subheader("💰 Saldos dos Bancos")
-bancos_presentes = [b for b in ["Bradesco","Sicredi","BB","BB Alimentos","Banrisul"]
+bancos_presentes = [b for b in ["Bradesco","Bradesco Alimentos","Sicredi","BB","BB Alimentos","Banrisul"]
                     if not df_banco_full[df_banco_full["banco"] == b].empty]
 cols = st.columns(len(bancos_presentes) + 1)
 for i, b in enumerate(bancos_presentes):
