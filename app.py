@@ -280,7 +280,7 @@ with st.sidebar:
     planilha_up = st.file_uploader("Planilha de previsões (FC)",
         type=["xlsx","xls"])
     st.caption("Extratos: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
-    st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO com nome do beneficiário)")
+    st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO e transferências com nome do beneficiário)")
     st.divider()
     data_sel = st.date_input("📅 Data do extrato", value=datetime.now().date())
     mostrar_periodo = st.toggle("Ver período (mais de um dia)", value=False)
@@ -360,7 +360,9 @@ if dfs_consulta:
         _lookup.setdefault(key, []).append(row["beneficiario"])
 
     _GENERICOS_BNR = {"pgto boleto", "pag boleto", "pagamento boleto",
-                      "debito automatico", "arrecadacao", "cobranca"}
+                      "debito automatico", "arrecadacao", "cobranca",
+                      "debito transferencia", "deb transferencia",
+                      "transferencia", "ted", "pix"}
 
     def _enriquecer_banrisul(row):
         if row["banco"] != "Banrisul":
