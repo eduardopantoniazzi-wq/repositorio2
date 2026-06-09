@@ -584,31 +584,8 @@ def _formatar_excel(wb):
                 cell.border    = borda_fina
                 cell.alignment = Alignment(vertical="center", wrap_text=False)
 
-                # Garante formatação brasileira nos valores monetários (texto fixo)
                 col_name = headers[cell.column - 1] if cell.column - 1 < len(headers) else ""
-                if col_name in ("Valor Previsto (R$)", "Valor Pago (R$)", "Diferença (R$)"):
-                    # Converte para float e regrava como texto no padrão BR (R$ 1.234,56)
-                    raw = str(cell.value or "").replace("R$", "").strip()
-                    try:
-                        # Suporta tanto "1.234,56" quanto "1234.56"
-                        if "," in raw:
-                            num = float(raw.replace(".", "").replace(",", "."))
-                        else:
-                            num = float(raw)
-                        sinal = "+" if num > 0 and col_name == "Diferença (R$)" else ""
-                        cell.value = f"{sinal}R$ {num:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    except Exception:
-                        pass
-                    cell.alignment = Alignment(horizontal="right", vertical="center")
-                elif col_name == "Diferença (%)":
-                    raw = str(cell.value or "").replace("%", "").replace("+", "").strip()
-                    try:
-                        num = float(raw.replace(",", "."))
-                        sinal = "+" if num > 0 else ""
-                        cell.value = f"{sinal}{num:.1f}%".replace(".", ",")
-                    except Exception:
-                        pass
-                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                _ = col_name  # sem formatação extra — valores já vêm formatados do app
 
         # ── Larguras das colunas ────────────────────────────────────────────
         for i, col_name in enumerate(headers, start=1):
