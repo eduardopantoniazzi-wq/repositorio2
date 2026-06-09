@@ -1,5 +1,5 @@
 """
-Controle Anti-Desvio — Moinho de Trigo
+Controle de Débito — Moinho de Trigo
 Tabela: Débitos Previstos (planilha FC) × Débitos Efetivados (extratos)
 """
 
@@ -12,7 +12,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-st.set_page_config(page_title="Controle Anti-Desvio — Moinho de Trigo",
+st.set_page_config(page_title="Controle de Débito — Moinho de Trigo",
                    page_icon="🌾", layout="wide")
 
 _MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
