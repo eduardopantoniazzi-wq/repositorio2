@@ -21,6 +21,7 @@ _MESES_NUM = {m: f"{i+1:02d}" for i, m in enumerate(_MESES)}
 
 BANCO_POR_NOME = {
     "bradesco_alimentos": "Bradesco Alimentos", "bradescalimentos": "Bradesco Alimentos",
+    "bradesco alimentos": "Bradesco Alimentos",
     "bradesco": "Bradesco", "sicredi": "Sicredi",
     "banrisul": "Banrisul",
     "bb_alimentos": "BB Alimentos", "bbalimentos": "BB Alimentos",
