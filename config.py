@@ -43,7 +43,7 @@ UNIDADES = ["Santa Maria", "Canoas"]
 # Deixe em branco para tratar tudo como empresa única.
 BANCO_UNIDADE = {
     "Bradesco":            "Santa Maria",
-    "Bradesco Alimentos":  "Canoas",
+    "Bradesco Alimentos":  "",
     "Sicredi":             "Santa Maria",
     "BB":                  "Canoas",
     "BB Alimentos":        "Canoas",
