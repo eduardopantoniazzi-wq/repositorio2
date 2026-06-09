@@ -91,6 +91,14 @@ class LeitorBB(LeitorBase):
             # Remove prefixo de número de lote restante
             hist_limpo = re.sub(r"^\d{3,5}\s+", "", hist_limpo).strip()
 
+            # Ignora lançamentos de investimento BB Rende Fácil (aplicação/resgate)
+            _INVEST_BB = ("rende facil", "rende fácil", "bb rende", "aplic auto",
+                          "aplicacao automatica", "aplicação automática",
+                          "resgate automatico", "resgate automático")
+            if any(p in hist_limpo.lower() for p in _INVEST_BB):
+                i += 1
+                continue
+
             # Próxima linha pode ser o nome do beneficiário
             beneficiario = ""
             if i + 1 < len(rows):
