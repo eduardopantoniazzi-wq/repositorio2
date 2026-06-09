@@ -353,11 +353,12 @@ df_banco = pd.concat(dfs, ignore_index=True)
 # ── Enriquece descrições do Banrisul com nomes da Consulta Operações ────────
 if dfs_consulta:
     df_cons = pd.concat(dfs_consulta, ignore_index=True)
-    # Lookup: (data, valor_arredondado) → fila de beneficiários
-    _lookup: dict = {}
+    # Lookup: valor_arredondado → lista de (data, beneficiario)
+    # Indexado só por valor para tolerar datas com 1 dia de diferença
+    _lookup_val: dict = {}
     for _, row in df_cons.iterrows():
-        key = (row["data"], round(row["valor"], 2))
-        _lookup.setdefault(key, []).append(row["beneficiario"])
+        v = round(row["valor"], 2)
+        _lookup_val.setdefault(v, []).append((row["data"], row["beneficiario"]))
 
     _GENERICOS_BNR = {"pgto boleto", "pag boleto", "pagamento boleto",
                       "debito automatico", "arrecadacao", "cobranca",
@@ -369,13 +370,21 @@ if dfs_consulta:
             return row["descricao"]
         desc_low = str(row["descricao"]).lower()
         if not any(g in desc_low for g in _GENERICOS_BNR):
-            return row["descricao"]   # já tem nome, não precisa enriquecer
+            return row["descricao"]
         valor = round(float(row["debito"]), 2)
-        key = (row["data"], valor)
-        fila = _lookup.get(key)
-        if fila:
-            nome = fila.pop(0)
-            return f"{row['descricao']} / {nome}"
+        if valor == 0:
+            return row["descricao"]
+        candidatos = _lookup_val.get(valor, [])
+        if not candidatos:
+            return row["descricao"]
+        data_row = row["data"]
+        # Tenta match exato de data primeiro, depois aceita ±1 dia
+        for delta in (0, 1, -1):
+            alvo = data_row + pd.Timedelta(days=delta)
+            for i, (data_c, nome) in enumerate(candidatos):
+                if data_c == alvo:
+                    candidatos.pop(i)
+                    return f"{row['descricao']} / {nome}"
         return row["descricao"]
 
     df_banco["descricao"] = df_banco.apply(_enriquecer_banrisul, axis=1)
