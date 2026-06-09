@@ -69,9 +69,9 @@ def ler_extrato(nome, conteudo):
     finally:
         tmp_path.unlink(missing_ok=True)
 
-def ler_planilha(conteudo, meses):
+def ler_planilha(conteudo, meses, filename=".xlsx"):
     from src.readers.planilha import ler_planilha as _ler
-    suffix = ".xlsx"
+    suffix = Path(filename).suffix or ".xlsx"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(conteudo); tmp_path = Path(tmp.name)
     try:
@@ -280,7 +280,7 @@ with st.sidebar:
     planilha_up = st.file_uploader("Planilha de previsões (FC)",
         type=["xlsx","xls"])
     st.caption("Extratos: bradesco_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
-    st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO com nome do beneficiário)")
+    st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO e transferências com nome do beneficiário)")
     st.divider()
     data_sel = st.date_input("📅 Data do extrato", value=datetime.now().date())
     mostrar_periodo = st.toggle("Ver período (mais de um dia)", value=False)
@@ -360,7 +360,9 @@ if dfs_consulta:
         _lookup.setdefault(key, []).append(row["beneficiario"])
 
     _GENERICOS_BNR = {"pgto boleto", "pag boleto", "pagamento boleto",
-                      "debito automatico", "arrecadacao", "cobranca"}
+                      "debito automatico", "arrecadacao", "cobranca",
+                      "debito transferencia", "deb transferencia",
+                      "transferencia", "ted", "pix"}
 
     def _enriquecer_banrisul(row):
         if row["banco"] != "Banrisul":
@@ -389,7 +391,7 @@ if not meses_necessarios:
 
 # Lê planilha
 with st.spinner("Lendo planilha de previsões..."):
-    df_prev, err = ler_planilha(planilha_up.read(), meses=meses_necessarios)
+    df_prev, err = ler_planilha(planilha_up.read(), meses=meses_necessarios, filename=planilha_up.name)
     if err:
         st.error(err); st.stop()
     st.sidebar.success(f"✔ {planilha_up.name} ({len(df_prev)} lançamentos)")
