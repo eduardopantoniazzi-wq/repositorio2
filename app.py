@@ -514,16 +514,120 @@ st.dataframe(
     },
 )
 
-# Download
+# Download com formatação Excel
+def _formatar_excel(wb):
+    """Aplica formatação (cores, larguras, cabeçalho) a todas as abas do workbook."""
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    # Mapeamento status → cor de fundo (hex sem #)
+    _COR_STATUS = {
+        "✅": ("D4EDDA", "155724"),   # verde
+        "⚠️": ("FFF3CD", "856404"),   # amarelo
+        "🚨": ("F8D7DA", "721C24"),   # vermelho
+        "🕐": ("E2E3E5", "383D41"),   # cinza
+    }
+    _COR_BENEF = ("F8D7DA", "721C24")  # vermelho para beneficiário trocado
+
+    # Larguras preferidas por nome de coluna (em caracteres)
+    _LARGURAS = {
+        "Status": 32, "🔴 Alerta": 40,
+        "Data Prevista": 14, "Data Pago": 14,
+        "Beneficiário Previsto": 34, "Pago Para": 34,
+        "Valor Previsto (R$)": 18, "Valor Pago (R$)": 18,
+        "Diferença (R$)": 18, "Diferença (%)": 14,
+        "Banco": 14,
+    }
+
+    borda_fina = Border(
+        left=Side(style="thin", color="CCCCCC"),
+        right=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"),
+        bottom=Side(style="thin", color="CCCCCC"),
+    )
+
+    for ws in wb.worksheets:
+        # ── Cabeçalho ──────────────────────────────────────────────────────
+        for cell in ws[1]:
+            cell.font      = Font(bold=True, color="FFFFFF", size=11)
+            cell.fill      = PatternFill("solid", fgColor="2C3E50")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border    = borda_fina
+        ws.row_dimensions[1].height = 30
+
+        # Descobre índice da coluna Status
+        status_col = None
+        headers = [c.value for c in ws[1]]
+        if "Status" in headers:
+            status_col = headers.index("Status")
+
+        # ── Linhas de dados ─────────────────────────────────────────────────
+        for row in ws.iter_rows(min_row=2):
+            # Determina cor pela coluna Status
+            bg, fg = "FFFFFF", "000000"
+            if status_col is not None:
+                status_val = str(row[status_col].value or "")
+                if "BENEFICIÁRIO" in status_val:
+                    bg, fg = _COR_BENEF
+                else:
+                    for prefix, (b, f) in _COR_STATUS.items():
+                        if status_val.startswith(prefix):
+                            bg, fg = b, f
+                            break
+
+            fill = PatternFill("solid", fgColor=bg)
+            font_cor = Font(color=fg, size=10)
+
+            for cell in row:
+                cell.fill      = fill
+                cell.font      = font_cor
+                cell.border    = borda_fina
+                cell.alignment = Alignment(vertical="center", wrap_text=False)
+
+                # Formata valores monetários numericamente
+                col_name = headers[cell.column - 1] if cell.column - 1 < len(headers) else ""
+                if col_name in ("Valor Previsto (R$)", "Valor Pago (R$)", "Diferença (R$)"):
+                    try:
+                        v = float(str(cell.value).replace("R$","").replace(".","").replace(",",".").strip())
+                        cell.value = v
+                        cell.number_format = 'R$ #,##0.00'
+                    except Exception:
+                        pass
+                elif col_name == "Diferença (%)":
+                    try:
+                        v = float(str(cell.value).replace("%","").replace("+","").strip())
+                        cell.value = v / 100
+                        cell.number_format = '+0.0%;-0.0%;0.0%'
+                    except Exception:
+                        pass
+
+        # ── Larguras das colunas ────────────────────────────────────────────
+        for i, col_name in enumerate(headers, start=1):
+            larg = _LARGURAS.get(col_name, 18)
+            ws.column_dimensions[get_column_letter(i)].width = larg
+
+        # Congela cabeçalho
+        ws.freeze_panes = "A2"
+
+    return wb
+
+
 buf = io.BytesIO()
 with pd.ExcelWriter(buf, engine="openpyxl") as w:
-    df_view.to_excel(w, sheet_name="Comparativo", index=False)
+    df_show.to_excel(w, sheet_name="Comparativo", index=False)
     df_res[df_res["Status"].str.startswith("🚨")].to_excel(w, sheet_name="Fora da Planilha", index=False)
     df_res[df_res["Status"].str.startswith("⚠️")].to_excel(w, sheet_name="Divergências de Valor", index=False)
     df_banco.to_excel(w, sheet_name="Extrato Consolidado", index=False)
 
+import openpyxl as _openpyxl
+buf.seek(0)
+_wb = _openpyxl.load_workbook(buf)
+_formatar_excel(_wb)
+buf2 = io.BytesIO()
+_wb.save(buf2)
+
 st.download_button("📥 Baixar Excel",
-    data=buf.getvalue(),
+    data=buf2.getvalue(),
     file_name=f"comparativo_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True)
