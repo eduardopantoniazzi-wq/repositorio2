@@ -117,7 +117,13 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             return max(seq, 0.55 + 0.1 * min(len(comuns), 3))
         return seq
 
-    deb_banco = df_banco[df_banco["debito"] > 0].copy().reset_index(drop=True)
+    _OP_EXCLUIR = ["TARIFA","TAXA","IOF","JUROS","INSS","FGTS","SALDO","RENTAB",
+                   "FACILCRED","RENDE FACIL","DEBITO SERV"]
+
+    deb_banco = df_banco[
+        (df_banco["debito"] > 0) &
+        ~df_banco["descricao"].str.upper().apply(lambda d: any(p in d for p in _OP_EXCLUIR))
+    ].copy().reset_index(drop=True)
     deb_prev  = df_prev[df_prev["debito"] > 0].copy().reset_index(drop=True)
 
     nP = len(deb_prev)
