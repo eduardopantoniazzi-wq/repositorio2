@@ -222,7 +222,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             })
 
     # ── Débitos bancários sem par = não previstos ────────────────────────
-    OPERACIONAL = ["IOF","JUROS","INSS","FGTS","SALDO","RENTAB",
+    OPERACIONAL = ["TARIFA","TAXA","IOF","JUROS","INSS","FGTS","SALDO","RENTAB",
                    "FACILCRED","RENDE FACIL","DEBITO SERV"]
     for ib, deb in deb_banco.iterrows():
         if ib in usados_banco:
