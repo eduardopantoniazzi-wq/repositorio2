@@ -124,6 +124,22 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         """Retorna True se o banco indica prefeitura e o previsto indica imposto municipal."""
         return bool(palavras_banco & _KW_PREFEITURA) and bool(palavras_prev & _KW_IMPOSTO_MUNI)
 
+    # Aliases: pares de conjuntos de palavras que representam a mesma entidade
+    # mas com nomes completamente diferentes no previsto vs extrato.
+    # Cada entry é (grupo_A, grupo_B) — match se A∩palavras_prev≠∅ e B∩palavras_banco≠∅ (ou vice-versa)
+    _ALIASES: list[tuple[set, set]] = [
+        ({"VIVO"},   {"TELEFONICA", "TELEF"}),
+        # CACISM = Câmara de Comércio Ind. e Serviços de Santa Maria
+        ({"CACISM", "CAM"},  {"CACISM", "CAM", "CAMARA", "COMERCIO"}),
+    ]
+
+    def _tem_alias(set_a: set, set_b: set) -> bool:
+        """Retorna True se set_a e set_b fazem parte do mesmo grupo de aliases."""
+        for ga, gb in _ALIASES:
+            if (set_a & ga and set_b & gb) or (set_a & gb and set_b & ga):
+                return True
+        return False
+
     def _prefixo_overlap(set_a: set, set_b: set, min_len: int = 4) -> int:
         """Conta pares onde um token (≥min_len chars) é prefixo do outro.
         Ex: COOP ↔ COOPERATIVA, TRANSP ↔ TRANSPORTES, FRIG ↔ FRIGORIFICO."""
@@ -188,8 +204,6 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 diff_dias = abs((deb["data"] - prev["data"]).days)
             except Exception:
                 diff_dias = 999
-            if diff_dias > 5:
-                continue
 
             nb, palavras_b = banco_norms[ib]
             exatas, prefixos = _palavras_comuns(palavras_a, palavras_b)
@@ -199,19 +213,29 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             if total_match:
                 # Palavra exata ou prefixo em comum
                 s_nome = 0.55 + 0.1 * min(total_match, 3)
+                limite_dias = 10   # nome forte → aceita até 10 dias de diferença
+            elif _tem_alias(palavras_a, palavras_b):
+                # Alias explícito: VIVO↔TELEFONICA, CACISM↔CAM DE COM...
+                s_nome = 0.70
+                limite_dias = 10
             elif _eh_imposto_prefeitura(palavras_a, palavras_b):
-                # Previsto=imposto municipal (IPTU/ISS…) ↔ Banco=Prefeitura
                 s_nome = 0.65
+                limite_dias = 10
             elif exatas:
                 # Só iniciais em comum — score fraco
                 s_nome = 0.32
+                limite_dias = 5
             elif na and nb:
                 # Fallback: similaridade de string
                 ratio = SequenceMatcher(None, na, nb).ratio()
                 if ratio < 0.55:
                     continue
                 s_nome = ratio * 0.70
+                limite_dias = 5
             else:
+                continue
+
+            if diff_dias > limite_dias:
                 continue
 
             s_val  = max(0.0, 1 - diff_val / 0.60)
@@ -257,18 +281,18 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         palavras_p = set(prev_norm.split())
 
         def _candidato(wset, bnorm):
-            """Retorna True se o boleto é candidato para este previsto.
-            Boletos sem nome (wset vazio) são ignorados — não mistura por valor puro."""
             if not wset and not bnorm:
-                return False  # boleto sem nome identificável — ignora
+                return False
             if palavras_p & wset:
-                return True  # palavra exata em comum
+                return True
             if _prefixo_overlap(palavras_p, wset) > 0:
-                return True  # prefixo em comum (COOP↔COOPERATIVA etc.)
+                return True
+            if _tem_alias(palavras_p, wset):
+                return True
             if _eh_imposto_prefeitura(palavras_p, wset):
-                return True  # imposto municipal ↔ prefeitura
+                return True
             if prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50:
-                return True  # similaridade de string (fallback, só com nome)
+                return True
             return False
 
         cands = [(ib, v) for ib, v, wset, bnorm in livres_info
@@ -318,10 +342,11 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         # Boletos livres com nome similar ao previsto — ignora boletos sem nome
         extras = [(ib, v) for ib, v, wset, bnorm in livres_info
                   if ib not in usados_banco
-                  and (wset or bnorm)                          # ignora boletos sem nome
+                  and (wset or bnorm)
                   and v <= (prev_val - pago_val) * 1.30
                   and (palavras_p & wset
                        or _prefixo_overlap(palavras_p, wset) > 0
+                       or _tem_alias(palavras_p, wset)
                        or _eh_imposto_prefeitura(palavras_p, wset)
                        or (prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.42))]
 
