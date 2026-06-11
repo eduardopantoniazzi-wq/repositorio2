@@ -100,9 +100,12 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     STOP = {"nf","nota","fiscal","ltda","sa","eireli","me","epp","pag","pgto",
             "ted","pix","de","boleto","pagamento","transferencia","transf"}
 
+    _norm_cache = {}
     def norm(s):
-        s = re.sub(r"[^\w\s]", " ", str(s).upper())
-        return " ".join(w for w in s.split() if len(w) > 2 and w.lower() not in STOP)
+        if s not in _norm_cache:
+            t = re.sub(r"[^\w\s]", " ", str(s).upper())
+            _norm_cache[s] = " ".join(w for w in t.split() if len(w) > 2 and w.lower() not in STOP)
+        return _norm_cache[s]
 
     def sim_nome(a, b):
         na, nb = norm(a), norm(b)
@@ -110,21 +113,27 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             return 0.0
         palavras_a = set(na.split())
         palavras_b = set(nb.split())
-        seq = SequenceMatcher(None, na, nb).ratio()
-        # Qualquer palavra em comum já eleva bastante o score
         comuns = palavras_a & palavras_b
         if comuns:
-            return max(seq, 0.55 + 0.1 * min(len(comuns), 3))
-        return seq
+            return 0.55 + 0.1 * min(len(comuns), 3)
+        return SequenceMatcher(None, na, nb).ratio()
 
+    # Filtro vetorizado (mais rápido que .apply)
     _OP_EXCLUIR = ["TARIFA","TAXA","IOF","JUROS","INSS","FGTS","SALDO","RENTAB",
                    "FACILCRED","RENDE FACIL","DEBITO SERV"]
+    _op_pat = "|".join(_OP_EXCLUIR)
 
     deb_banco = df_banco[
         (df_banco["debito"] > 0) &
-        ~df_banco["descricao"].str.upper().apply(lambda d: any(p in d for p in _OP_EXCLUIR))
+        ~df_banco["descricao"].str.upper().str.contains(_op_pat, regex=True, na=False)
     ].copy().reset_index(drop=True)
     deb_prev  = df_prev[df_prev["debito"] > 0].copy().reset_index(drop=True)
+
+    # Pré-calcula normas e palavras para evitar recalcular no loop
+    prev_norms = {ip: (norm(r["descricao"]), set(norm(r["descricao"]).split()))
+                  for ip, r in deb_prev.iterrows()}
+    banco_norms = {ib: (norm(r["descricao"]), set(norm(r["descricao"]).split()))
+                   for ib, r in deb_banco.iterrows()}
 
     nP = len(deb_prev)
     nB = len(deb_banco)
@@ -132,6 +141,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     # ── Monta matriz de scores (nP × nB) ────────────────────────────────
     scores = {}   # (ip, ib) -> score
     for ip, prev in deb_prev.iterrows():
+        na, palavras_a = prev_norms[ip]
         for ib, deb in deb_banco.iterrows():
             diff_val = abs(deb["debito"] - prev["debito"]) / max(prev["debito"], 1)
             if diff_val > 0.60:
@@ -143,8 +153,15 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             if diff_dias > 5:
                 continue
 
+            nb, palavras_b = banco_norms[ib]
+            comuns = palavras_a & palavras_b
+            if comuns:
+                s_nome = 0.55 + 0.1 * min(len(comuns), 3)
+            elif na and nb:
+                s_nome = SequenceMatcher(None, na, nb).ratio()
+            else:
+                s_nome = 0.0
             s_val  = max(0.0, 1 - diff_val / 0.60)
-            s_nome = sim_nome(prev["descricao"], deb["descricao"])
             s_data = max(0.0, 1 - diff_dias / 6)
 
             # Nome tem peso maior que valor — evita trocar beneficiários
