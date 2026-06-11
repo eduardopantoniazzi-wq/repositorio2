@@ -250,35 +250,90 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 usados_banco.add(ib)
             usados_prev.add(ip)
 
+    # ── Passo 3: enriquece casamentos 1:1 parciais com boletos NÃO PREVISTOS ──
+    # Se um par já casou 1:1 mas o valor pago é muito menor que o previsto,
+    # busca boletos livres com nome similar que, somados, completam o previsto.
+    atribuicoes_enrich = {}  # ip -> (ib_principal, [ibs_extras], total)
+
+    for ip, (ib_principal, score) in list(atribuicoes.items()):
+        prev     = deb_prev.loc[ip]
+        deb      = deb_banco.loc[ib_principal]
+        prev_val = prev["debito"]
+        pago_val = deb["debito"]
+
+        # Só tenta se o pago cobrir menos de 85% do previsto
+        if pago_val >= prev_val * 0.85:
+            continue
+
+        prev_norm  = norm(prev["descricao"])
+        palavras_p = set(prev_norm.split())
+
+        # Boletos livres com nome similar ao previsto
+        extras = [(ib, v) for ib, v, wset, bnorm in livres_info
+                  if ib not in usados_banco
+                  and v < prev_val
+                  and (palavras_p & wset
+                       or (prev_norm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.45))]
+
+        if not extras:
+            continue
+
+        # Greedy: acumula extras partindo do valor já pago
+        extras.sort(key=lambda x: x[1], reverse=True)
+        sel_extras, acum = [], pago_val
+        for ib, v in extras:
+            if acum + v <= prev_val * 1.20:
+                sel_extras.append(ib)
+                acum += v
+
+        if not sel_extras:
+            continue
+
+        total_final = round(acum, 2)
+        if abs(total_final - prev_val) / max(prev_val, 1) <= 0.20:
+            atribuicoes_enrich[ip] = (ib_principal, sel_extras, total_final)
+            for ib in sel_extras:
+                usados_banco.add(ib)
+
     LIMITE_ALERTA = float(limite_alerta)
 
     # ── Monta linhas da tabela ───────────────────────────────────────────
     linhas = []
 
+    def _linha_multi(prev, debs, all_ibs, total):
+        """Monta linha para casamento de 1 previsto com N boletos."""
+        diff  = round(total - prev["debito"], 2)
+        pct   = diff / prev["debito"] * 100 if prev["debito"] else 0
+        alerta = f"🔴 Diferença de R$ {abs(diff):,.2f}" if abs(diff) > 0.01 else ""
+        status = "✅ OK (múlt.)" if abs(diff) <= prev["debito"] * 0.02 else "⚠️ VALOR DIFERENTE (múlt.)"
+        banco_str = debs["banco"].iloc[0] if debs["banco"].nunique() == 1 else "Múltiplos"
+        benef     = debs["descricao"].iloc[0].split("/")[0].strip()
+        return {
+            "Status":                status,
+            "🔴 Alerta":             alerta,
+            "Data Prevista":         prev["data"],
+            "Beneficiário Previsto": prev["descricao"],
+            "Valor Previsto (R$)":   prev["debito"],
+            "Data Pago":             debs["data"].min(),
+            "Banco":                 banco_str,
+            "Pago Para":             f"Múltiplos boletos ({len(all_ibs)}x) / {benef}",
+            "Valor Pago (R$)":       total,
+            "Diferença (R$)":        diff,
+            "Diferença (%)":         round(pct, 1),
+        }
+
     for ip, prev in deb_prev.iterrows():
+        if ip in atribuicoes_enrich:
+            ib_princ, ibs_extras, total = atribuicoes_enrich[ip]
+            all_ibs = [ib_princ] + ibs_extras
+            debs    = deb_banco.loc[all_ibs]
+            linhas.append(_linha_multi(prev, debs, all_ibs, total))
+            continue
+
         if ip in atribuicoes_multi:
             ibs, total = atribuicoes_multi[ip]
-            debs     = deb_banco.loc[ibs]
-            total    = round(total, 2)
-            diff     = round(total - prev["debito"], 2)
-            pct      = diff / prev["debito"] * 100 if prev["debito"] else 0
-            alerta   = f"🔴 Diferença de R$ {abs(diff):,.2f}" if abs(diff) > 0.01 else ""
-            status   = "✅ OK (múlt.)" if abs(diff) <= prev["debito"] * 0.02 else "⚠️ VALOR DIFERENTE (múlt.)"
-            banco_str = debs["banco"].iloc[0] if debs["banco"].nunique() == 1 else "Múltiplos"
-            benef     = debs["descricao"].iloc[0].split("/")[0].strip()
-            linhas.append({
-                "Status":                status,
-                "🔴 Alerta":             alerta,
-                "Data Prevista":         prev["data"],
-                "Beneficiário Previsto": prev["descricao"],
-                "Valor Previsto (R$)":   prev["debito"],
-                "Data Pago":             debs["data"].min(),
-                "Banco":                 banco_str,
-                "Pago Para":             f"Múltiplos boletos ({len(ibs)}x) / {benef}",
-                "Valor Pago (R$)":       total,
-                "Diferença (R$)":        diff,
-                "Diferença (%)":         round(pct, 1),
-            })
+            debs = deb_banco.loc[ibs]
+            linhas.append(_linha_multi(prev, debs, ibs, round(total, 2)))
             continue
 
         if ip in atribuicoes:
