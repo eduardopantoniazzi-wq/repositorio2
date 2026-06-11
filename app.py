@@ -100,7 +100,11 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     STOP = {"nf","nota","fiscal","ltda","sa","eireli","me","epp","pag","pgto",
             "ted","pix","de","da","do","das","dos","ao","as","os",
             "boleto","pagamento","transferencia","transf",
-            "e","a","o","em","na","no","por","com","um","uma"}
+            "e","a","o","em","na","no","por","com","um","uma",
+            # sufixos genéricos de tipo de empresa — não são discriminativos
+            "log","transp","trans","logistica","logísticas","comercio",
+            "industria","servicos","alimentos","agro","agropecuaria",
+            "transportes","distribuidora","distribuidores"}
 
     _norm_cache = {}
     def norm(s):
