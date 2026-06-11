@@ -155,21 +155,17 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
 
             nb, palavras_b = banco_norms[ib]
             comuns = palavras_a & palavras_b
-            if comuns:
-                s_nome = 0.55 + 0.1 * min(len(comuns), 3)
-            elif na and nb:
-                s_nome = SequenceMatcher(None, na, nb).ratio()
-            else:
-                s_nome = 0.0
+
+            # Casamento 1:1 exige pelo menos uma palavra em comum — sem isso, não casa
+            if not comuns:
+                continue
+
+            s_nome = 0.55 + 0.1 * min(len(comuns), 3)
             s_val  = max(0.0, 1 - diff_val / 0.60)
             s_data = max(0.0, 1 - diff_dias / 6)
 
             # Nome tem peso maior que valor — evita trocar beneficiários
             score = s_nome * 0.50 + s_val * 0.35 + s_data * 0.15
-
-            # Exige afinidade mínima de nome para qualquer casamento 1:1
-            if s_nome < 0.30:
-                continue
 
             scores[(ip, ib)] = score
 
