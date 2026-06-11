@@ -247,6 +247,40 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         if ib not in usados_banco
     ]
 
+    # ── Pré-computa afinidade de cada boleto livre com cada item previsto ────
+    # Isso evita que boletos de "T SILVEIRA GOMES" sejam atribuídos a "J SILVEIRA"
+    # quando ambos compartilham "SILVEIRA": o boleto vai ao previsto com MAIOR score.
+    def _sim_boleto_prev(palavras_p: set, prev_norm: str, wset: set, bnorm: str) -> float:
+        exatas, pref = _palavras_comuns(palavras_p, wset)
+        exatas_sig = {w for w in exatas if len(w) >= 2}
+        score = len(exatas_sig) * 2.0 + pref * 1.0
+        if _eh_imposto_prefeitura(palavras_p, wset):
+            score += 2.0
+        if prev_norm and bnorm:
+            score += SequenceMatcher(None, prev_norm, bnorm).ratio() * 0.5
+        # Bônus por palavras curtas/iniciais que diferenciam (ex: "J" vs "T")
+        iniciais = {w for w in exatas if len(w) == 1}
+        score += len(iniciais) * 0.3
+        return score
+
+    # Lista de todos os itens previstos com débito (usada para comparação global)
+    todos_prevs = [(ip, set(norm(r["descricao"]).split()), norm(r["descricao"]))
+                   for ip, r in deb_prev.iterrows() if r["debito"] > 0]
+
+    # Para cada boleto livre, qual previsto tem maior afinidade de nome?
+    boleto_melhor_prev: dict = {}  # ib -> ip (o previsto que mais combina com o boleto)
+    for ib, v, wset, bnorm in livres_info:
+        if not wset and not bnorm:
+            continue
+        best_ip, best_score = None, 0.0
+        for ip2, pw2, pn2 in todos_prevs:
+            s = _sim_boleto_prev(pw2, pn2, wset, bnorm)
+            if s > best_score:
+                best_score = s
+                best_ip = ip2
+        if best_ip is not None and best_score > 0.0:
+            boleto_melhor_prev[ib] = best_ip
+
     atribuicoes_multi = {}
 
     for ip, prev in deb_prev.iterrows():
@@ -256,23 +290,25 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
 
-        def _candidato(wset, bnorm):
-            """Retorna True se o boleto é candidato para este previsto.
-            Boletos sem nome (wset vazio) são ignorados — não mistura por valor puro."""
+        def _candidato(wset, bnorm, ib):
+            """Boleto é candidato se tem afinidade de nome E esta é a melhor correspondência."""
             if not wset and not bnorm:
-                return False  # boleto sem nome identificável — ignora
+                return False
+            # Verifica se este previsto é o melhor match para o boleto
+            if boleto_melhor_prev.get(ib) not in (ip, None):
+                return False  # outro previsto tem score maior — não usa aqui
             if palavras_p & wset:
-                return True  # palavra exata em comum
+                return True
             if _prefixo_overlap(palavras_p, wset) > 0:
-                return True  # prefixo em comum (COOP↔COOPERATIVA etc.)
+                return True
             if _eh_imposto_prefeitura(palavras_p, wset):
-                return True  # imposto municipal ↔ prefeitura
+                return True
             if prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50:
-                return True  # similaridade de string (fallback, só com nome)
+                return True
             return False
 
         cands = [(ib, v) for ib, v, wset, bnorm in livres_info
-                 if ib not in usados_banco and v < prev_val and _candidato(wset, bnorm)]
+                 if ib not in usados_banco and v < prev_val and _candidato(wset, bnorm, ib)]
 
         if len(cands) < 2:
             continue
@@ -318,7 +354,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         # Boletos livres com nome similar ao previsto — ignora boletos sem nome
         extras = [(ib, v) for ib, v, wset, bnorm in livres_info
                   if ib not in usados_banco
-                  and (wset or bnorm)                          # ignora boletos sem nome
+                  and (wset or bnorm)
+                  and boleto_melhor_prev.get(ib) in (ip, None)  # não rouba boletos de outros
                   and v <= (prev_val - pago_val) * 1.30
                   and (palavras_p & wset
                        or _prefixo_overlap(palavras_p, wset) > 0
