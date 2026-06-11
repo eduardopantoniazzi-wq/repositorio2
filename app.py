@@ -291,7 +291,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 return True
             if _eh_imposto_prefeitura(palavras_p, wset):
                 return True
-            if prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50:
+            # SequenceMatcher com threshold alto para evitar RANELLI↔ANDERLE falsos
+            if prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.65:
                 return True
             return False
 
@@ -344,11 +345,11 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                   if ib not in usados_banco
                   and (wset or bnorm)
                   and v <= (prev_val - pago_val) * 1.30
-                  and (palavras_p & wset
-                       or _prefixo_overlap(palavras_p, wset) > 0
-                       or _tem_alias(palavras_p, wset)
-                       or _eh_imposto_prefeitura(palavras_p, wset)
-                       or (prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.42))]
+                  and (palavras_p & wset                          # palavra exata (RANELLI, ANDERLE…)
+                       or _prefixo_overlap(palavras_p, wset) > 0  # prefixo (COOP↔COOPERATIVA)
+                       or _tem_alias(palavras_p, wset)             # alias explícito
+                       or _eh_imposto_prefeitura(palavras_p, wset))]
+                  # ← SequenceMatcher REMOVIDO do enriquecimento: evita RANELLI↔ANDERLE cruzados
 
         if not extras:
             continue
