@@ -98,13 +98,17 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     import re
 
     STOP = {"nf","nota","fiscal","ltda","sa","eireli","me","epp","pag","pgto",
-            "ted","pix","de","boleto","pagamento","transferencia","transf"}
+            "ted","pix","de","da","do","das","dos","ao","as","os",
+            "boleto","pagamento","transferencia","transf",
+            "e","a","o","em","na","no","por","com","um","uma"}
 
     _norm_cache = {}
     def norm(s):
         if s not in _norm_cache:
+            # Remove pontuação (& vira espaço → "M&F" = "M F"; mantém tokens curtos)
             t = re.sub(r"[^\w\s]", " ", str(s).upper())
-            _norm_cache[s] = " ".join(w for w in t.split() if len(w) > 2 and w.lower() not in STOP)
+            # Sem filtro de comprimento — preserva abreviações como "M", "F", "T", "R"
+            _norm_cache[s] = " ".join(w for w in t.split() if w.lower() not in STOP)
         return _norm_cache[s]
 
     def sim_nome(a, b):
@@ -156,11 +160,14 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             nb, palavras_b = banco_norms[ib]
             comuns = palavras_a & palavras_b
 
-            # Casamento 1:1 exige pelo menos uma palavra em comum — sem isso, não casa
+            # Casamento 1:1 exige pelo menos uma palavra em comum
             if not comuns:
                 continue
-
-            s_nome = 0.55 + 0.1 * min(len(comuns), 3)
+            # Palavras significativas (≥2 chars) têm peso maior — evita falso match por inicial
+            comuns_sig = {w for w in comuns if len(w) >= 2}
+            s_nome = 0.55 + 0.1 * min(len(comuns_sig) if comuns_sig else 0, 3)
+            if not comuns_sig:
+                s_nome = 0.30  # match fraco: só iniciais em comum
             s_val  = max(0.0, 1 - diff_val / 0.60)
             s_data = max(0.0, 1 - diff_dias / 6)
 
