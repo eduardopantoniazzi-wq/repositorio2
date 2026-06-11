@@ -302,21 +302,24 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         prev_val = prev["debito"]
         pago_val = deb["debito"]
 
-        # Só tenta se o pago cobrir menos de 85% do previsto
-        if pago_val >= prev_val * 0.85:
+        # Tenta enriquecer qualquer match com diferença > 1% (não só abaixo de 85%)
+        if pago_val >= prev_val * 0.99:
+            continue
+        # Também não enriquece se já pagou mais do que o previsto
+        if pago_val > prev_val:
             continue
 
         prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
 
-        # Boletos livres com nome similar ao previsto (palavra, prefixo ou string)
+        # Boletos livres com nome similar ao previsto (palavra, prefixo, prefeitura ou string)
         extras = [(ib, v) for ib, v, wset, bnorm in livres_info
                   if ib not in usados_banco
-                  and v < prev_val
+                  and v <= (prev_val - pago_val) * 1.30   # não maior que o que falta (com folga)
                   and (palavras_p & wset
                        or _prefixo_overlap(palavras_p, wset) > 0
                        or _eh_imposto_prefeitura(palavras_p, wset)
-                       or (prev_norm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.45))]
+                       or (prev_norm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.42))]
 
         if not extras:
             continue
