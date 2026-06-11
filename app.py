@@ -594,7 +594,15 @@ def _formatar_excel(wb):
                 cell.alignment = Alignment(vertical="center", wrap_text=False)
 
                 col_name = headers[cell.column - 1] if cell.column - 1 < len(headers) else ""
-                _ = col_name  # sem formatação extra — valores já vêm formatados do app
+                # Converte colunas monetárias para número real → Excel consegue somar
+                if col_name in ("Valor Previsto (R$)", "Valor Pago (R$)", "Diferença (R$)"):
+                    raw = str(cell.value or "").replace("R$", "").replace("+", "").replace(",", "").strip()
+                    try:
+                        cell.value = float(raw)
+                        cell.number_format = '"R$ "#,##0.00'
+                        cell.alignment = Alignment(horizontal="right", vertical="center")
+                    except Exception:
+                        pass
 
         # ── Larguras das colunas ────────────────────────────────────────────
         for i, col_name in enumerate(headers, start=1):
