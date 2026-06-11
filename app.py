@@ -172,8 +172,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         usados_banco.add(ib)
 
     # ── Casamento 1:N — um previsto para múltiplos boletos ───────────────
-    # Para previstos não casados, tenta encontrar grupo de débitos bancários
-    # com nome similar cuja soma ≈ valor previsto (tolerância 10%)
+    # Algoritmo guloso: ordena candidatos por valor desc e acumula até atingir o total.
+    # Fallback: combinações só se ≤ 8 candidatos e greedy não encontrou.
     from itertools import combinations as _combos
     atribuicoes_multi = {}  # ip -> lista de ib
 
@@ -181,23 +181,44 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         if ip in atribuicoes:
             continue
         prev_val = prev["debito"]
-        # Candidatos: não usados, nome similar ao previsto
+
+        # Candidatos: não usados, nome similar (limiar mais alto para performance)
         cands = [(ib, deb_banco.loc[ib, "debito"])
                  for ib in deb_banco.index
                  if ib not in usados_banco
-                 and sim_nome(prev["descricao"], deb_banco.loc[ib, "descricao"]) >= 0.30]
+                 and deb_banco.loc[ib, "debito"] < prev_val  # boleto menor que o total
+                 and sim_nome(prev["descricao"], deb_banco.loc[ib, "descricao"]) >= 0.35]
         if len(cands) < 2:
             continue
-        # Testa combinações de 2 até 8 boletos
-        achou = None
-        for r in range(2, min(len(cands) + 1, 9)):
-            for combo in _combos(cands, r):
-                total = sum(v for _, v in combo)
-                if abs(total - prev_val) / max(prev_val, 1) <= 0.10:
-                    achou = combo
-                    break
-            if achou:
+        # Descarta se soma máxima nem chega perto do alvo
+        soma_max = sum(v for _, v in cands)
+        if soma_max < prev_val * 0.80:
+            continue
+
+        # ── Greedy: pega maiores valores primeiro ──────────────────────
+        sorted_c = sorted(cands, key=lambda x: x[1], reverse=True)
+        greedy, total_g = [], 0.0
+        for ib, v in sorted_c:
+            if total_g + v <= prev_val * 1.10:
+                greedy.append((ib, v))
+                total_g += v
+            if abs(total_g - prev_val) / max(prev_val, 1) <= 0.10:
                 break
+
+        achou = None
+        if len(greedy) >= 2 and abs(total_g - prev_val) / max(prev_val, 1) <= 0.10:
+            achou = greedy
+        # ── Fallback combinações (só se poucos candidatos) ─────────────
+        elif len(cands) <= 8:
+            for r in range(2, min(len(cands) + 1, 6)):
+                for combo in _combos(cands, r):
+                    total = sum(v for _, v in combo)
+                    if abs(total - prev_val) / max(prev_val, 1) <= 0.10:
+                        achou = list(combo)
+                        break
+                if achou:
+                    break
+
         if achou:
             ibs = [ib for ib, _ in achou]
             atribuicoes_multi[ip] = ibs
