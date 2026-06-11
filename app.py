@@ -257,15 +257,18 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         palavras_p = set(prev_norm.split())
 
         def _candidato(wset, bnorm):
-            """Retorna True se o boleto é candidato para este previsto."""
+            """Retorna True se o boleto é candidato para este previsto.
+            Boletos sem nome (wset vazio) são ignorados — não mistura por valor puro."""
+            if not wset and not bnorm:
+                return False  # boleto sem nome identificável — ignora
             if palavras_p & wset:
                 return True  # palavra exata em comum
             if _prefixo_overlap(palavras_p, wset) > 0:
                 return True  # prefixo em comum (COOP↔COOPERATIVA etc.)
             if _eh_imposto_prefeitura(palavras_p, wset):
                 return True  # imposto municipal ↔ prefeitura
-            if prev_norm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50:
-                return True  # similaridade de string (fallback)
+            if prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50:
+                return True  # similaridade de string (fallback, só com nome)
             return False
 
         cands = [(ib, v) for ib, v, wset, bnorm in livres_info
@@ -312,14 +315,15 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
 
-        # Boletos livres com nome similar ao previsto (palavra, prefixo, prefeitura ou string)
+        # Boletos livres com nome similar ao previsto — ignora boletos sem nome
         extras = [(ib, v) for ib, v, wset, bnorm in livres_info
                   if ib not in usados_banco
-                  and v <= (prev_val - pago_val) * 1.30   # não maior que o que falta (com folga)
+                  and (wset or bnorm)                          # ignora boletos sem nome
+                  and v <= (prev_val - pago_val) * 1.30
                   and (palavras_p & wset
                        or _prefixo_overlap(palavras_p, wset) > 0
                        or _eh_imposto_prefeitura(palavras_p, wset)
-                       or (prev_norm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.42))]
+                       or (prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.42))]
 
         if not extras:
             continue
@@ -353,7 +357,27 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         alerta = f"🔴 Diferença de R$ {abs(diff):,.2f}" if abs(diff) > 0.01 else ""
         status = "✅ OK (múlt.)" if abs(diff) <= prev["debito"] * 0.02 else "⚠️ VALOR DIFERENTE (múlt.)"
         banco_str = debs["banco"].iloc[0] if debs["banco"].nunique() == 1 else "Múltiplos"
-        benef     = debs["descricao"].iloc[0].split("/")[0].strip()
+
+        # Extrai o nome do beneficiário: ignora tokens genéricos e prefere a parte após "/"
+        _GENERICOS = {"PGTO", "PAGO", "BOLETO", "DEBITO", "DEBITO", "CREDITO",
+                      "TRANSFERENCIA", "TED", "PIX", "PAGAMENTO"}
+        def _melhor_nome(desc: str) -> str:
+            partes = [p.strip() for p in str(desc).split("/")]
+            for parte in reversed(partes):          # tenta do fim para o início
+                palavras = set(parte.upper().split())
+                if palavras and not palavras.issubset(_GENERICOS):
+                    return parte
+            return partes[0]
+
+        # Escolhe o nome mais informativo entre todos os boletos do grupo
+        benef = ""
+        for desc in debs["descricao"]:
+            candidato = _melhor_nome(desc)
+            if candidato and set(candidato.upper().split()) - _GENERICOS:
+                benef = candidato
+                break
+        if not benef:
+            benef = debs["descricao"].iloc[0]
         return {
             "Status":                status,
             "🔴 Alerta":             alerta,
