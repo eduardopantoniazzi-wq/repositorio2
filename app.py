@@ -159,15 +159,23 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
 
             nb, palavras_b = banco_norms[ib]
             comuns = palavras_a & palavras_b
-
-            # Casamento 1:1 exige pelo menos uma palavra em comum
-            if not comuns:
-                continue
-            # Palavras significativas (≥2 chars) têm peso maior — evita falso match por inicial
             comuns_sig = {w for w in comuns if len(w) >= 2}
-            s_nome = 0.55 + 0.1 * min(len(comuns_sig) if comuns_sig else 0, 3)
-            if not comuns_sig:
-                s_nome = 0.30  # match fraco: só iniciais em comum
+
+            if comuns_sig:
+                # Match por palavra real em comum — score forte
+                s_nome = 0.55 + 0.1 * min(len(comuns_sig), 3)
+            elif comuns:
+                # Só iniciais em comum — score fraco
+                s_nome = 0.32
+            elif na and nb:
+                # Fallback: similaridade de string para nomes abreviados diferentemente
+                ratio = SequenceMatcher(None, na, nb).ratio()
+                if ratio < 0.55:
+                    continue
+                s_nome = ratio * 0.70  # cap em 0.70 para não superar matches por palavra
+            else:
+                continue
+
             s_val  = max(0.0, 1 - diff_val / 0.60)
             s_data = max(0.0, 1 - diff_dias / 6)
 
@@ -192,9 +200,11 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         usados_banco.add(ib)
 
     # ── Casamento 1:N — um previsto para múltiplos boletos ───────────────
-    # Coleta todos os débitos bancários livres com suas palavras normalizadas
+    # Pré-computa norma e palavras de todos os boletos livres
     livres_info = [
-        (ib, deb_banco.loc[ib, "debito"], set(norm(deb_banco.loc[ib, "descricao"]).split()))
+        (ib, deb_banco.loc[ib, "debito"],
+         set(norm(deb_banco.loc[ib, "descricao"]).split()),
+         norm(deb_banco.loc[ib, "descricao"]))
         for ib in deb_banco.index
         if ib not in usados_banco
     ]
@@ -207,27 +217,34 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         prev_val   = prev["debito"]
         prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
-        if not palavras_p:
-            continue
 
-        # Candidatos: boletos livres menores que o total, com pelo menos 1 palavra em comum
-        cands = [(ib, v) for ib, v, wset in livres_info
+        # Candidatos primários: pelo menos 1 palavra em comum
+        cands = [(ib, v) for ib, v, wset, _ in livres_info
                  if ib not in usados_banco and v < prev_val and (palavras_p & wset)]
+
+        # Candidatos secundários (fallback): nome abreviado/similar sem palavra exata em comum
+        if len(cands) < 2 and prev_norm:
+            extras = [(ib, v) for ib, v, wset, bnorm in livres_info
+                      if ib not in usados_banco and v < prev_val
+                      and not (palavras_p & wset)
+                      and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50]
+            cands = cands + extras
 
         if len(cands) < 2:
             continue
-        if sum(v for _, v in cands) < prev_val * 0.75:
+        total_cands = sum(v for _, v in cands)
+        if total_cands < prev_val * 0.70:
             continue
 
-        # Greedy: maiores valores primeiro, acumula até ≈ alvo (tolerância 15%)
+        # Greedy: maiores valores primeiro, acumula até ≈ alvo (tolerância 20%)
         cands.sort(key=lambda x: x[1], reverse=True)
         sel, total = [], 0.0
         for ib, v in cands:
-            if total + v <= prev_val * 1.15:
+            if total + v <= prev_val * 1.20:
                 sel.append(ib)
                 total += v
 
-        if len(sel) >= 2 and abs(total - prev_val) / max(prev_val, 1) <= 0.15:
+        if len(sel) >= 2 and abs(total - prev_val) / max(prev_val, 1) <= 0.20:
             atribuicoes_multi[ip] = (sel, total)
             for ib in sel:
                 usados_banco.add(ib)
