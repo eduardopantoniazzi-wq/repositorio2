@@ -111,15 +111,36 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             _norm_cache[s] = " ".join(w for w in t.split() if w.lower() not in STOP)
         return _norm_cache[s]
 
+    def _prefixo_overlap(set_a: set, set_b: set, min_len: int = 4) -> int:
+        """Conta pares onde um token (≥min_len chars) é prefixo do outro.
+        Ex: COOP ↔ COOPERATIVA, TRANSP ↔ TRANSPORTES, FRIG ↔ FRIGORIFICO."""
+        count = 0
+        for a in set_a:
+            if len(a) < min_len:
+                continue
+            for b in set_b:
+                if len(b) < min_len:
+                    continue
+                if a != b and (b.startswith(a) or a.startswith(b)):
+                    count += 1
+        return count
+
+    def _palavras_comuns(set_a: set, set_b: set):
+        """Retorna palavras exatamente iguais + conta de pares por prefixo."""
+        exatas = set_a & set_b
+        prefixos = _prefixo_overlap(set_a, set_b)
+        return exatas, prefixos
+
     def sim_nome(a, b):
         na, nb = norm(a), norm(b)
         if not na or not nb:
             return 0.0
         palavras_a = set(na.split())
         palavras_b = set(nb.split())
-        comuns = palavras_a & palavras_b
-        if comuns:
-            return 0.55 + 0.1 * min(len(comuns), 3)
+        exatas, prefixos = _palavras_comuns(palavras_a, palavras_b)
+        total_match = len(exatas) + prefixos
+        if total_match:
+            return 0.55 + 0.1 * min(total_match, 3)
         return SequenceMatcher(None, na, nb).ratio()
 
     # Filtro vetorizado (mais rápido que .apply)
@@ -158,21 +179,22 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 continue
 
             nb, palavras_b = banco_norms[ib]
-            comuns = palavras_a & palavras_b
-            comuns_sig = {w for w in comuns if len(w) >= 2}
+            exatas, prefixos = _palavras_comuns(palavras_a, palavras_b)
+            exatas_sig = {w for w in exatas if len(w) >= 2}
+            total_match = len(exatas_sig) + prefixos
 
-            if comuns_sig:
-                # Match por palavra real em comum — score forte
-                s_nome = 0.55 + 0.1 * min(len(comuns_sig), 3)
-            elif comuns:
+            if total_match:
+                # Palavra exata ou prefixo em comum (COOP↔COOPERATIVA, TRANSP↔TRANSPORTES…)
+                s_nome = 0.55 + 0.1 * min(total_match, 3)
+            elif exatas:
                 # Só iniciais em comum — score fraco
                 s_nome = 0.32
             elif na and nb:
-                # Fallback: similaridade de string para nomes abreviados diferentemente
+                # Fallback: similaridade de string para nomes sem nenhum token em comum
                 ratio = SequenceMatcher(None, na, nb).ratio()
                 if ratio < 0.55:
                     continue
-                s_nome = ratio * 0.70  # cap em 0.70 para não superar matches por palavra
+                s_nome = ratio * 0.70
             else:
                 continue
 
@@ -218,17 +240,18 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
 
-        # Candidatos primários: pelo menos 1 palavra em comum
-        cands = [(ib, v) for ib, v, wset, _ in livres_info
-                 if ib not in usados_banco and v < prev_val and (palavras_p & wset)]
+        def _candidato(wset, bnorm):
+            """Retorna True se o boleto é candidato para este previsto."""
+            if palavras_p & wset:
+                return True  # palavra exata em comum
+            if _prefixo_overlap(palavras_p, wset) > 0:
+                return True  # prefixo em comum (COOP↔COOPERATIVA etc.)
+            if prev_norm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50:
+                return True  # similaridade de string (fallback)
+            return False
 
-        # Candidatos secundários (fallback): nome abreviado/similar sem palavra exata em comum
-        if len(cands) < 2 and prev_norm:
-            extras = [(ib, v) for ib, v, wset, bnorm in livres_info
-                      if ib not in usados_banco and v < prev_val
-                      and not (palavras_p & wset)
-                      and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.50]
-            cands = cands + extras
+        cands = [(ib, v) for ib, v, wset, bnorm in livres_info
+                 if ib not in usados_banco and v < prev_val and _candidato(wset, bnorm)]
 
         if len(cands) < 2:
             continue
@@ -268,11 +291,12 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
 
-        # Boletos livres com nome similar ao previsto
+        # Boletos livres com nome similar ao previsto (palavra, prefixo ou string)
         extras = [(ib, v) for ib, v, wset, bnorm in livres_info
                   if ib not in usados_banco
                   and v < prev_val
                   and (palavras_p & wset
+                       or _prefixo_overlap(palavras_p, wset) > 0
                        or (prev_norm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.45))]
 
         if not extras:
