@@ -167,8 +167,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             # Nome tem peso maior que valor — evita trocar beneficiários
             score = s_nome * 0.50 + s_val * 0.35 + s_data * 0.15
 
-            # Descarta pares sem nenhuma afinidade de nome E valor muito diferente
-            if s_nome < 0.20 and diff_val > 0.10:
+            # Exige afinidade mínima de nome para qualquer casamento 1:1
+            if s_nome < 0.30:
                 continue
 
             scores[(ip, ib)] = score
@@ -189,54 +189,44 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         usados_banco.add(ib)
 
     # ── Casamento 1:N — um previsto para múltiplos boletos ───────────────
-    # Agrupa débitos não casados por nome normalizado e usa greedy O(n log n)
-    from collections import defaultdict
-    grupos: dict = defaultdict(list)  # norm_name -> [(ib, debito)]
-    for ib in deb_banco.index:
-        if ib not in usados_banco:
-            n_desc = norm(deb_banco.loc[ib, "descricao"])
-            if n_desc:
-                grupos[n_desc].append((ib, deb_banco.loc[ib, "debito"]))
+    # Coleta todos os débitos bancários livres com suas palavras normalizadas
+    livres_info = [
+        (ib, deb_banco.loc[ib, "debito"], set(norm(deb_banco.loc[ib, "descricao"]).split()))
+        for ib in deb_banco.index
+        if ib not in usados_banco
+    ]
 
     atribuicoes_multi = {}
 
     for ip, prev in deb_prev.iterrows():
         if ip in atribuicoes:
             continue
-        prev_val  = prev["debito"]
-        prev_norm = norm(prev["descricao"])
+        prev_val   = prev["debito"]
+        prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
         if not palavras_p:
             continue
 
-        melhor_ibs, melhor_total = None, None
+        # Candidatos: boletos livres menores que o total, com pelo menos 1 palavra em comum
+        cands = [(ib, v) for ib, v, wset in livres_info
+                 if ib not in usados_banco and v < prev_val and (palavras_p & wset)]
 
-        for gname, items in grupos.items():
-            # Filtra grupos com pelo menos uma palavra em comum
-            if not (palavras_p & set(gname.split())):
-                continue
-            # Só boletos menores que o total previsto
-            cands = [(ib, v) for ib, v in items
-                     if ib not in usados_banco and v < prev_val]
-            if len(cands) < 2:
-                continue
-            # Descarta grupo cuja soma total nem chega perto
-            if sum(v for _, v in cands) < prev_val * 0.75:
-                continue
-            # Greedy: maiores valores primeiro, acumula até ≈ alvo
-            cands.sort(key=lambda x: x[1], reverse=True)
-            sel, total = [], 0.0
-            for ib, v in cands:
-                if total + v <= prev_val * 1.10:
-                    sel.append(ib)
-                    total += v
-            if len(sel) >= 2 and abs(total - prev_val) / max(prev_val, 1) <= 0.10:
-                melhor_ibs, melhor_total = sel, total
-                break  # aceita primeiro grupo que bate
+        if len(cands) < 2:
+            continue
+        if sum(v for _, v in cands) < prev_val * 0.75:
+            continue
 
-        if melhor_ibs:
-            atribuicoes_multi[ip] = (melhor_ibs, melhor_total)
-            for ib in melhor_ibs:
+        # Greedy: maiores valores primeiro, acumula até ≈ alvo (tolerância 15%)
+        cands.sort(key=lambda x: x[1], reverse=True)
+        sel, total = [], 0.0
+        for ib, v in cands:
+            if total + v <= prev_val * 1.15:
+                sel.append(ib)
+                total += v
+
+        if len(sel) >= 2 and abs(total - prev_val) / max(prev_val, 1) <= 0.15:
+            atribuicoes_multi[ip] = (sel, total)
+            for ib in sel:
                 usados_banco.add(ib)
             usados_prev.add(ip)
 
