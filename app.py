@@ -135,6 +135,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         ({"VIVO"},   {"TELEFONICA", "TELEF"}),
         # CACISM = Câmara de Comércio Ind. e Serviços de Santa Maria
         ({"CACISM", "CAM"},  {"CACISM", "CAM", "CAMARA", "COMERCIO"}),
+        # SAFE2PAY é intermediadora de pagamentos que processa boletos da BORGES LOG
+        ({"BORGES"}, {"SAFE2PAY", "SAFE"}),
     ]
 
     def _tem_alias(set_a: set, set_b: set) -> bool:
