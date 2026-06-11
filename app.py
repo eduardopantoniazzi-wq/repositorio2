@@ -229,14 +229,9 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 # Só iniciais em comum — score fraco
                 s_nome = 0.32
                 limite_dias = 5
-            elif na and nb:
-                # Fallback: similaridade de string
-                ratio = SequenceMatcher(None, na, nb).ratio()
-                if ratio < 0.55:
-                    continue
-                s_nome = ratio * 0.70
-                limite_dias = 5
             else:
+                # Sem palavra, alias ou categoria em comum → descarta
+                # SequenceMatcher removido: ANDERLE e RANELLI têm ratio ~0.55 e se confundem
                 continue
 
             if diff_dias > limite_dias:
