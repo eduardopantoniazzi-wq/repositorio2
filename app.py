@@ -188,7 +188,57 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         usados_prev.add(ip)
         usados_banco.add(ib)
 
-    atribuicoes_multi = {}  # reservado para uso futuro
+    # ── Casamento 1:N — um previsto para múltiplos boletos ───────────────
+    # Agrupa débitos não casados por nome normalizado e usa greedy O(n log n)
+    from collections import defaultdict
+    grupos: dict = defaultdict(list)  # norm_name -> [(ib, debito)]
+    for ib in deb_banco.index:
+        if ib not in usados_banco:
+            n_desc = norm(deb_banco.loc[ib, "descricao"])
+            if n_desc:
+                grupos[n_desc].append((ib, deb_banco.loc[ib, "debito"]))
+
+    atribuicoes_multi = {}
+
+    for ip, prev in deb_prev.iterrows():
+        if ip in atribuicoes:
+            continue
+        prev_val  = prev["debito"]
+        prev_norm = norm(prev["descricao"])
+        palavras_p = set(prev_norm.split())
+        if not palavras_p:
+            continue
+
+        melhor_ibs, melhor_total = None, None
+
+        for gname, items in grupos.items():
+            # Filtra grupos com pelo menos uma palavra em comum
+            if not (palavras_p & set(gname.split())):
+                continue
+            # Só boletos menores que o total previsto
+            cands = [(ib, v) for ib, v in items
+                     if ib not in usados_banco and v < prev_val]
+            if len(cands) < 2:
+                continue
+            # Descarta grupo cuja soma total nem chega perto
+            if sum(v for _, v in cands) < prev_val * 0.75:
+                continue
+            # Greedy: maiores valores primeiro, acumula até ≈ alvo
+            cands.sort(key=lambda x: x[1], reverse=True)
+            sel, total = [], 0.0
+            for ib, v in cands:
+                if total + v <= prev_val * 1.10:
+                    sel.append(ib)
+                    total += v
+            if len(sel) >= 2 and abs(total - prev_val) / max(prev_val, 1) <= 0.10:
+                melhor_ibs, melhor_total = sel, total
+                break  # aceita primeiro grupo que bate
+
+        if melhor_ibs:
+            atribuicoes_multi[ip] = (melhor_ibs, melhor_total)
+            for ib in melhor_ibs:
+                usados_banco.add(ib)
+            usados_prev.add(ip)
 
     LIMITE_ALERTA = float(limite_alerta)
 
@@ -196,6 +246,31 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     linhas = []
 
     for ip, prev in deb_prev.iterrows():
+        if ip in atribuicoes_multi:
+            ibs, total = atribuicoes_multi[ip]
+            debs     = deb_banco.loc[ibs]
+            total    = round(total, 2)
+            diff     = round(total - prev["debito"], 2)
+            pct      = diff / prev["debito"] * 100 if prev["debito"] else 0
+            alerta   = f"🔴 Diferença de R$ {abs(diff):,.2f}" if abs(diff) > 0.01 else ""
+            status   = "✅ OK (múlt.)" if abs(diff) <= prev["debito"] * 0.02 else "⚠️ VALOR DIFERENTE (múlt.)"
+            banco_str = debs["banco"].iloc[0] if debs["banco"].nunique() == 1 else "Múltiplos"
+            benef     = debs["descricao"].iloc[0].split("/")[0].strip()
+            linhas.append({
+                "Status":                status,
+                "🔴 Alerta":             alerta,
+                "Data Prevista":         prev["data"],
+                "Beneficiário Previsto": prev["descricao"],
+                "Valor Previsto (R$)":   prev["debito"],
+                "Data Pago":             debs["data"].min(),
+                "Banco":                 banco_str,
+                "Pago Para":             f"Múltiplos boletos ({len(ibs)}x) / {benef}",
+                "Valor Pago (R$)":       total,
+                "Diferença (R$)":        diff,
+                "Diferença (%)":         round(pct, 1),
+            })
+            continue
+
         if ip in atribuicoes:
             ib, score = atribuicoes[ip]
             deb  = deb_banco.loc[ib]
