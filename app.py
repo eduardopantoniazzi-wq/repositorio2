@@ -104,7 +104,10 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             # sufixos genéricos de tipo de empresa — não são discriminativos
             "log","transp","trans","logistica","logísticas","comercio",
             "industria","servicos","alimentos","agro","agropecuaria",
-            "transportes","distribuidora","distribuidores"}
+            "transportes","distribuidora","distribuidores",
+            # termos geográficos/institucionais que não identificam a empresa
+            "cooperativa","cooperativas","cachoeiras","tres",
+            "santa","maria","canoas","brasil","nacional"}
 
     _norm_cache = {}
     def norm(s):
