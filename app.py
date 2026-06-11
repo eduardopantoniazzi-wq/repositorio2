@@ -171,60 +171,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         usados_prev.add(ip)
         usados_banco.add(ib)
 
-    # ── Casamento 1:N — um previsto para múltiplos boletos ───────────────
-    # Algoritmo guloso: ordena candidatos por valor desc e acumula até atingir o total.
-    # Fallback: combinações só se ≤ 8 candidatos e greedy não encontrou.
-    from itertools import combinations as _combos
-    atribuicoes_multi = {}  # ip -> lista de ib
-
-    for ip, prev in deb_prev.iterrows():
-        if ip in atribuicoes:
-            continue
-        prev_val = prev["debito"]
-
-        # Candidatos: não usados, nome similar (limiar mais alto para performance)
-        cands = [(ib, deb_banco.loc[ib, "debito"])
-                 for ib in deb_banco.index
-                 if ib not in usados_banco
-                 and deb_banco.loc[ib, "debito"] < prev_val  # boleto menor que o total
-                 and sim_nome(prev["descricao"], deb_banco.loc[ib, "descricao"]) >= 0.35]
-        if len(cands) < 2:
-            continue
-        # Descarta se soma máxima nem chega perto do alvo
-        soma_max = sum(v for _, v in cands)
-        if soma_max < prev_val * 0.80:
-            continue
-
-        # ── Greedy: pega maiores valores primeiro ──────────────────────
-        sorted_c = sorted(cands, key=lambda x: x[1], reverse=True)
-        greedy, total_g = [], 0.0
-        for ib, v in sorted_c:
-            if total_g + v <= prev_val * 1.10:
-                greedy.append((ib, v))
-                total_g += v
-            if abs(total_g - prev_val) / max(prev_val, 1) <= 0.10:
-                break
-
-        achou = None
-        if len(greedy) >= 2 and abs(total_g - prev_val) / max(prev_val, 1) <= 0.10:
-            achou = greedy
-        # ── Fallback combinações (só se poucos candidatos) ─────────────
-        elif len(cands) <= 8:
-            for r in range(2, min(len(cands) + 1, 6)):
-                for combo in _combos(cands, r):
-                    total = sum(v for _, v in combo)
-                    if abs(total - prev_val) / max(prev_val, 1) <= 0.10:
-                        achou = list(combo)
-                        break
-                if achou:
-                    break
-
-        if achou:
-            ibs = [ib for ib, _ in achou]
-            atribuicoes_multi[ip] = ibs
-            for ib in ibs:
-                usados_banco.add(ib)
-            usados_prev.add(ip)
+    atribuicoes_multi = {}  # reservado para uso futuro
 
     LIMITE_ALERTA = float(limite_alerta)
 
@@ -232,33 +179,6 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     linhas = []
 
     for ip, prev in deb_prev.iterrows():
-        if ip in atribuicoes_multi:
-            ibs   = atribuicoes_multi[ip]
-            debs  = deb_banco.loc[ibs]
-            total = round(debs["debito"].sum(), 2)
-            diff  = round(total - prev["debito"], 2)
-            pct   = diff / prev["debito"] * 100 if prev["debito"] else 0
-            n     = len(ibs)
-            data_pago = debs["data"].min()
-            banco_str = debs["banco"].iloc[0] if debs["banco"].nunique() == 1 else "Múltiplos"
-            desc_str  = f"Múltiplos boletos ({n}x) / {debs['descricao'].iloc[0].split('/')[0].strip()}"
-            status = "✅ OK (múltiplos)" if abs(diff) <= prev["debito"] * 0.02 else "⚠️ VALOR DIFERENTE (múltiplos)"
-            alerta = f"🔴 Diferença de R$ {abs(diff):,.2f}" if abs(diff) > 0.01 else ""
-            linhas.append({
-                "Status":                  status,
-                "🔴 Alerta":               alerta,
-                "Data Prevista":           prev["data"],
-                "Beneficiário Previsto":   prev["descricao"],
-                "Valor Previsto (R$)":     prev["debito"],
-                "Data Pago":               data_pago,
-                "Banco":                   banco_str,
-                "Pago Para":               desc_str,
-                "Valor Pago (R$)":         total,
-                "Diferença (R$)":          diff,
-                "Diferença (%)":           round(pct, 1),
-            })
-            continue
-
         if ip in atribuicoes:
             ib, score = atribuicoes[ip]
             deb  = deb_banco.loc[ib]
