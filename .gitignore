@@ -1,13 +1,4 @@
-credentials/
-data/extratos/
-data/extrato_consolidado.xlsx
 __pycache__/
 *.pyc
 *.pyo
 .env
-data/extratos/*.pdf
-data/extratos/*.xlsx
-data/alertas_ultimo.xlsx
-data/conciliacao.xlsx
-data/nao_previstos.xlsx
-data/extrato_consolidado.xlsx
