@@ -23,7 +23,6 @@ class LeitorSicredi(LeitorBase):
                 tbl = page.extract_table()
                 if not tbl:
                     continue
-                # Ignora cabeçalhos e linhas de resumo (Saldo Atual, Lançamentos Futuros etc.)
                 for row in tbl:
                     if not row or len(row) < 5:
                         continue
@@ -32,7 +31,6 @@ class LeitorSicredi(LeitorBase):
                     doc  = str(row[2] or "").strip()
                     val  = str(row[3] or "").strip()
                     sld  = str(row[4] or "").strip()
-                    # Só processa linhas com data válida
                     if not _RE_DATA.match(data):
                         continue
                     registros.append({

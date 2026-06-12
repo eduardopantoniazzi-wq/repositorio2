@@ -1,10 +1,6 @@
 """
 Leitor de extrato Banco do Brasil.
 Formato: Dt.balancete | Dt.movimento | Ag.origem | Lote | Histórico | Documento | Valor R$ | Saldo
-
-Cada transação ocupa 2 linhas visuais:
-  linha 1: datas | ag | lote | histórico/tipo | doc | valor(C/D) | saldo?
-  linha 2: nome do beneficiário (sem data, sem valor)
 """
 
 from __future__ import annotations
@@ -18,7 +14,6 @@ _RE_VAL_NUM = re.compile(r"-?[\d]{1,3}(?:\.\d{3})*,\d{2}")
 
 
 def _extrair_cd(texto: str):
-    """Retorna (credito, debito) a partir de '1.234,56\\nC' ou '1.234,56 D'."""
     t = str(texto or "").replace("\n", " ").strip()
     m = _RE_VAL_CD.search(t)
     if m:
@@ -42,7 +37,6 @@ class LeitorBB(LeitorBase):
                 tbl = page.extract_table()
                 if not tbl:
                     continue
-                # Pula cabeçalho (linha com "Dt. balancete" ou "Histórico")
                 start = 0
                 for i, row in enumerate(tbl):
                     if row and any("Hist" in str(c or "") or "balancete" in str(c or "").lower() for c in row):
@@ -66,7 +60,6 @@ class LeitorBB(LeitorBase):
             while len(row) < 8:
                 row.append(None)
 
-            # Colunas: 0=dt_bal, 1=dt_mov, 2=ag, 3=lote, 4=historico, 5=doc, 6=valor, 7=saldo
             dt_bal   = str(row[0] or "").strip()
             dt_mov   = str(row[1] or "").strip()
             historico = str(row[4] or "").strip()
@@ -80,18 +73,21 @@ class LeitorBB(LeitorBase):
                 i += 1
                 continue
 
-            # Data: prefere dt_mov, cai em dt_bal
             data = ""
             m = _RE_DATA.search(dt_mov) or _RE_DATA.search(dt_bal)
             if m:
                 data = m.group()
 
-            # Limpa histórico: remove "lote ag tipo" (ex: "976 TED-...")
             hist_limpo = re.sub(r"^\d{3,5}\s+", "", historico).strip()
-            # Remove prefixo de número de lote restante
             hist_limpo = re.sub(r"^\d{3,5}\s+", "", hist_limpo).strip()
 
-            # Próxima linha pode ser o nome do beneficiário
+            _INVEST_BB = ("rende facil", "rende fácil", "bb rende", "aplic auto",
+                          "aplicacao automatica", "aplicação automática",
+                          "resgate automatico", "resgate automático")
+            if any(p in hist_limpo.lower() for p in _INVEST_BB):
+                i += 1
+                continue
+
             beneficiario = ""
             if i + 1 < len(rows):
                 prox = list(rows[i + 1])
@@ -100,7 +96,6 @@ class LeitorBB(LeitorBase):
                 prox_dt  = str(prox[0] or "").strip()
                 prox_hist = str(prox[4] or "").strip()
                 prox_val  = str(prox[6] or "").strip()
-                # Linha de beneficiário: sem data, sem valor, com texto em histórico
                 if (not _RE_DATA.search(prox_dt)
                         and prox_hist
                         and not _RE_VAL_CD.search(prox_val)
@@ -111,7 +106,24 @@ class LeitorBB(LeitorBase):
             descricao = f"{hist_limpo} / {beneficiario}".strip(" /") if beneficiario else hist_limpo
 
             cred, deb = _extrair_cd(val_raw)
-            saldo = _limpar_valor(_RE_VAL_NUM.search(sld_raw).group() if _RE_VAL_NUM.search(sld_raw) else "")
+            m_sld = _RE_VAL_NUM.search(sld_raw)
+            saldo = _limpar_valor(m_sld.group()) if m_sld else None
+
+            if re.search(r"\bS\s*A\s*L\s*D\s*O\b", hist_limpo, re.IGNORECASE):
+                saldo_final = cred if cred > 0 else (deb if deb > 0 else (saldo or 0))
+                if saldo_final and saldo_final > 0:
+                    if registros:
+                        registros[-1]["saldo"] = saldo_final
+                    registros.append({
+                        "data":      data or (registros[-1]["data"] if registros else "01/01/2000"),
+                        "descricao": "SALDO FINAL",
+                        "documento": "",
+                        "credito":   0.0,
+                        "debito":    0.0,
+                        "saldo":     saldo_final,
+                    })
+                i += 1
+                continue
 
             if data:
                 registros.append({

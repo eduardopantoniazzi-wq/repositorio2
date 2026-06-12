@@ -16,7 +16,6 @@ import pandas as pd
 
 from .base import LeitorBase, _limpar_valor, COLUNAS_PADRAO
 
-# Regex para valor monetário: 1.234,56 ou -1.234,56
 _RE_VALOR = re.compile(r"-?[\d]{1,3}(?:\.\d{3})*,\d{2}")
 _RE_DATA  = re.compile(r"\b(\d{2}/\d{2}/\d{4})\b")
 
@@ -59,33 +58,22 @@ class LeitorBradesco(LeitorBase):
                         continue
         raise ValueError(f"CSV Bradesco não reconhecido: {self.caminho}")
 
-    # ── Parser principal para o layout de texto do PDF ──────────────────────
     def _parsear_linhas(self, linhas: list[str]) -> pd.DataFrame:
-        """
-        Reconstrói as transações a partir do texto com layout espacial.
-        Cada transação tem saldo no final da linha — usamos isso como âncora.
-        """
         registros: list[dict] = []
         data_atual = ""
         desc_acumulada: list[str] = []
 
-        # Detecta se linha tem valores financeiros (pelo menos saldo)
         def tem_valores(linha: str) -> bool:
             return len(_RE_VALOR.findall(linha)) >= 1
 
         def extrair_valores(linha: str):
-            """Extrai crédito, débito e saldo de uma linha."""
             vals = _RE_VALOR.findall(linha)
             if not vals:
                 return None, None, None
             saldo = vals[-1]
-            # Credito/debito: se tiver 3 valores → cred, deb, saldo
-            # Se tiver 2 → (cred ou deb), saldo
-            # Se tiver 1 → saldo anterior
             if len(vals) >= 3:
                 return vals[-3], vals[-2], saldo
             elif len(vals) == 2:
-                # Distingue crédito de débito pelo sinal
                 v = vals[-2]
                 if v.startswith("-"):
                     return None, v, saldo
@@ -94,21 +82,21 @@ class LeitorBradesco(LeitorBase):
             return None, None, saldo
 
         def extrair_dcto(linha: str) -> str:
-            """Extrai o número de documento (série de dígitos no meio da linha)."""
-            # Remove valores monetários e datas para encontrar o doc
             sem_vals = _RE_VALOR.sub("", linha)
             sem_data = _RE_DATA.sub("", sem_vals)
-            # Procura sequência de dígitos isolada (número de documento)
             docs = re.findall(r"\b\d{5,}\b", sem_data)
             return docs[0] if docs else ""
 
-        # Linhas de controle que não são transações
         _IGNORAR = {
             "data", "lançamento", "dcto", "crédito", "débito", "saldo",
             "total", "saldos invest", "histórico", "folha", "os dados",
             "extrato", "agência", "conta", "nome do usuário", "bradesco",
             "net empresa", "data da operação", "últimos lançamentos",
         }
+
+        _INVEST_BALANCE = ("saldo invest fácil", "saldo invest facil",
+                           "saldo invest plus", "saldo rende facil",
+                           "saldo rende fácil")
 
         def eh_controle(linha: str) -> bool:
             l = linha.strip().lower()
@@ -119,10 +107,18 @@ class LeitorBradesco(LeitorBase):
                     return True
             return False
 
+        def eh_linha_invest(linha: str) -> bool:
+            l = linha.strip().lower()
+            return any(p in l for p in _INVEST_BALANCE)
+
         i = 0
         while i < len(linhas):
             linha = linhas[i]
             linha_strip = linha.strip()
+
+            if eh_linha_invest(linha_strip):
+                i += 1
+                continue
 
             if eh_controle(linha) and not _RE_DATA.search(linha):
                 i += 1
@@ -137,7 +133,6 @@ class LeitorBradesco(LeitorBase):
                 cred, deb, saldo = extrair_valores(linha)
                 dcto = extrair_dcto(linha)
 
-                # Descrição: acumula desc_acumulada + texto da linha sem nums/data
                 sem_nums = _RE_VALOR.sub("", linha)
                 sem_data = _RE_DATA.sub("", sem_nums)
                 desc_linha = re.sub(r"\b\d{5,}\b", "", sem_data).strip()
@@ -147,7 +142,6 @@ class LeitorBradesco(LeitorBase):
                     desc_partes.append(desc_linha)
                 descricao = " / ".join(p.strip() for p in desc_partes if p.strip())
 
-                # Pega linha seguinte como 2ª parte da descrição (beneficiário)
                 if i + 1 < len(linhas):
                     prox = linhas[i + 1].strip()
                     if prox and not tem_valores(prox) and not eh_controle(prox) and not _RE_DATA.match(prox):
@@ -168,11 +162,9 @@ class LeitorBradesco(LeitorBase):
                     })
                 desc_acumulada = []
             else:
-                # Linha só com texto → acumula descrição
                 if linha_strip and not eh_controle(linha):
                     if m_data:
                         data_atual = m_data.group(1)
-                        # descrição da mesma linha (ex: "SALDO ANTERIOR")
                         desc = _RE_DATA.sub("", linha_strip).strip()
                         if desc:
                             desc_acumulada = [desc]
@@ -189,7 +181,6 @@ class LeitorBradesco(LeitorBase):
         df = pd.DataFrame(registros)
         return df
 
-    # ── Renomear colunas para CSV/Excel tabulares ───────────────────────────
     _MAP = {
         r"data":        "data",
         r"lan[çc]amento|hist|descri": "descricao",
