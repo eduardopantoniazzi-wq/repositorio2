@@ -1,6 +1,6 @@
 """
-Controle de Débito — Moinho de Trigo v2
-Tabela: Débitos Previstos (planilha FC) × Débitos Efetivados (extratos)
+Controle de Débito — Sistema Interno v1
+Tabela: Débitos do Sistema (planilha interna) × Débitos Efetivados (extratos bancários)
 """
 
 import io, sys, tempfile
@@ -12,12 +12,8 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-st.set_page_config(page_title="Controle de Débito — Moinho de Trigo",
+st.set_page_config(page_title="Controle de Débito — Sistema Interno",
                    page_icon="🌾", layout="wide")
-
-_MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
-          "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
-_MESES_NUM = {m: f"{i+1:02d}" for i, m in enumerate(_MESES)}
 
 BANCO_POR_NOME = {
     "bradesco_alimentos": "Bradesco Alimentos", "bradescalimentos": "Bradesco Alimentos",
@@ -28,7 +24,6 @@ BANCO_POR_NOME = {
     "bb": "BB",
 }
 
-# Palavras que identificam o arquivo de Consulta Operações do Banrisul
 _CONSULTA_BANRISUL = ("banrisul_consulta", "consulta_banrisul",
                       "banrisul consulta", "consulta banrisul",
                       "banrisul_operacoes", "operacoes_banrisul",
@@ -37,7 +32,6 @@ _CONSULTA_BANRISUL = ("banrisul_consulta", "consulta_banrisul",
 
 def eh_consulta_banrisul(nome: str) -> bool:
     n = nome.lower()
-    # Qualquer arquivo com "banrisul" E "consulta" no nome
     if "banrisul" in n and "consulta" in n:
         return True
     return any(p in n for p in _CONSULTA_BANRISUL)
@@ -72,28 +66,20 @@ def ler_extrato(nome, conteudo):
     finally:
         tmp_path.unlink(missing_ok=True)
 
-def ler_planilha(conteudo, meses, filename=".xlsx"):
-    from src.readers.planilha import ler_planilha as _ler
+def ler_planilha_sistema(conteudo, filename=".xlsx"):
+    from src.readers.planilha_sistema import ler_planilha_sistema as _ler
     suffix = Path(filename).suffix or ".xlsx"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(conteudo); tmp_path = Path(tmp.name)
     try:
-        return _ler(tmp_path, meses=meses), None
+        return _ler(tmp_path), None
     except Exception as e:
-        return None, f"Erro ao ler planilha: {e}"
+        return None, f"Erro ao ler planilha do sistema: {e}"
     finally:
         tmp_path.unlink(missing_ok=True)
 
 
-def _mes_nome(numero: int) -> str:
-    return _MESES[numero - 1]
-
 def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
-    """
-    Casamento global: monta a matriz de scores de todos os pares possíveis
-    e atribui o melhor par disponível globalmente (não guloso por linha).
-    Isso evita que dois previstos com valor parecido troquem de beneficiário.
-    """
     from difflib import SequenceMatcher
     import re
 
@@ -101,7 +87,6 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             "ted","pix","de","da","do","das","dos","ao","as","os",
             "boleto","pagamento","transferencia","transf",
             "e","a","o","em","na","no","por","com","um","uma",
-            # sufixos genéricos de tipo de empresa — não são discriminativos
             "log","transp","trans","logistica","logísticas","comercio",
             "industria","servicos","alimentos","agro","agropecuaria",
             "transportes","distribuidora","distribuidores"}
@@ -109,15 +94,11 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     _norm_cache = {}
     def norm(s):
         if s not in _norm_cache:
-            # Remove pontuação (& vira espaço → "M&F" = "M F"; mantém tokens curtos)
             t = re.sub(r"[^\w\s]", " ", str(s).upper())
-            # Sem filtro de comprimento — preserva abreviações como "M", "F", "T", "R"
             _norm_cache[s] = " ".join(w for w in t.split() if w.lower() not in STOP)
         return _norm_cache[s]
 
-    # Palavras que identificam pagamento para prefeitura no extrato
     _KW_PREFEITURA = {"PREFEITURA", "PREF", "MUNICIPAL", "MUNICIPIO"}
-    # Impostos/taxas municipais que podem aparecer no previsto
     _KW_IMPOSTO_MUNI = {
         "IPTU", "ISS", "ISSQN", "ICMS", "ALVARA", "ALVARÁ", "LICENCA",
         "LICENÇA", "TRIBUTO", "CONTRIBUICAO", "CONTRIBUIÇÃO", "IMPOSTO",
@@ -125,30 +106,21 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     }
 
     def _eh_imposto_prefeitura(palavras_prev: set, palavras_banco: set) -> bool:
-        """Retorna True se o banco indica prefeitura e o previsto indica imposto municipal."""
         return bool(palavras_banco & _KW_PREFEITURA) and bool(palavras_prev & _KW_IMPOSTO_MUNI)
 
-    # Aliases: pares de conjuntos de palavras que representam a mesma entidade
-    # mas com nomes completamente diferentes no previsto vs extrato.
-    # Cada entry é (grupo_A, grupo_B) — match se A∩palavras_prev≠∅ e B∩palavras_banco≠∅ (ou vice-versa)
     _ALIASES: list[tuple[set, set]] = [
         ({"VIVO"},   {"TELEFONICA", "TELEF"}),
-        # CACISM = Câmara de Comércio Ind. e Serviços de Santa Maria
         ({"CACISM", "CAM"},  {"CACISM", "CAM", "CAMARA", "COMERCIO"}),
-        # SAFE2PAY é intermediadora de pagamentos que processa boletos da BORGES LOG
         ({"BORGES"}, {"SAFE2PAY", "SAFE"}),
     ]
 
     def _tem_alias(set_a: set, set_b: set) -> bool:
-        """Retorna True se set_a e set_b fazem parte do mesmo grupo de aliases."""
         for ga, gb in _ALIASES:
             if (set_a & ga and set_b & gb) or (set_a & gb and set_b & ga):
                 return True
         return False
 
     def _prefixo_overlap(set_a: set, set_b: set, min_len: int = 4) -> int:
-        """Conta pares onde um token (≥min_len chars) é prefixo do outro.
-        Ex: COOP ↔ COOPERATIVA, TRANSP ↔ TRANSPORTES, FRIG ↔ FRIGORIFICO."""
         count = 0
         for a in set_a:
             if len(a) < min_len:
@@ -161,7 +133,6 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         return count
 
     def _palavras_comuns(set_a: set, set_b: set):
-        """Retorna palavras exatamente iguais + conta de pares por prefixo."""
         exatas = set_a & set_b
         prefixos = _prefixo_overlap(set_a, set_b)
         return exatas, prefixos
@@ -178,7 +149,6 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             return 0.55 + 0.1 * min(total_match, 3)
         return SequenceMatcher(None, na, nb).ratio()
 
-    # Filtro vetorizado (mais rápido que .apply)
     _OP_EXCLUIR = ["TARIFA","TAXA","IOF","JUROS","INSS","FGTS","SALDO","RENTAB",
                    "FACILCRED","RENDE FACIL","DEBITO SERV"]
     _op_pat = "|".join(_OP_EXCLUIR)
@@ -189,17 +159,13 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     ].copy().reset_index(drop=True)
     deb_prev  = df_prev[df_prev["debito"] > 0].copy().reset_index(drop=True)
 
-    # Pré-calcula normas e palavras para evitar recalcular no loop
     prev_norms = {ip: (norm(r["descricao"]), set(norm(r["descricao"]).split()))
                   for ip, r in deb_prev.iterrows()}
     banco_norms = {ib: (norm(r["descricao"]), set(norm(r["descricao"]).split()))
                    for ib, r in deb_banco.iterrows()}
 
-    nP = len(deb_prev)
-    nB = len(deb_banco)
-
-    # ── Monta matriz de scores (nP × nB) ────────────────────────────────
-    scores = {}   # (ip, ib) -> score
+    # ── Monta matriz de scores ───────────────────────────────────────────
+    scores = {}
     for ip, prev in deb_prev.iterrows():
         na, palavras_a = prev_norms[ip]
         for ib, deb in deb_banco.iterrows():
@@ -217,23 +183,18 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             total_match = len(exatas_sig) + prefixos
 
             if total_match:
-                # Palavra exata ou prefixo em comum
                 s_nome = 0.55 + 0.1 * min(total_match, 3)
-                limite_dias = 10   # nome forte → aceita até 10 dias de diferença
+                limite_dias = 10
             elif _tem_alias(palavras_a, palavras_b):
-                # Alias explícito: VIVO↔TELEFONICA, CACISM↔CAM DE COM...
                 s_nome = 0.70
                 limite_dias = 10
             elif _eh_imposto_prefeitura(palavras_a, palavras_b):
                 s_nome = 0.65
                 limite_dias = 10
             elif exatas:
-                # Só iniciais em comum — score fraco
                 s_nome = 0.32
                 limite_dias = 5
             else:
-                # Sem palavra, alias ou categoria em comum → descarta
-                # SequenceMatcher removido: ANDERLE e RANELLI têm ratio ~0.55 e se confundem
                 continue
 
             if diff_dias > limite_dias:
@@ -241,17 +202,14 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
 
             s_val  = max(0.0, 1 - diff_val / 0.60)
             s_data = max(0.0, 1 - diff_dias / 6)
-
-            # Nome tem peso maior que valor — evita trocar beneficiários
             score = s_nome * 0.50 + s_val * 0.35 + s_data * 0.15
-
             scores[(ip, ib)] = score
 
-    # ── Casamento global: atribui pares por ordem de melhor score ────────
+    # ── Casamento global ─────────────────────────────────────────────────
     pares_ordenados = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     usados_prev  = set()
     usados_banco = set()
-    atribuicoes  = {}   # ip -> (ib, score)
+    atribuicoes  = {}
 
     for (ip, ib), score in pares_ordenados:
         if ip in usados_prev or ib in usados_banco:
@@ -262,8 +220,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         usados_prev.add(ip)
         usados_banco.add(ib)
 
-    # ── Casamento 1:N — um previsto para múltiplos boletos ───────────────
-    # Pré-computa norma e palavras de todos os boletos livres
+    # ── Casamento 1:N ────────────────────────────────────────────────────
     livres_info = [
         (ib, deb_banco.loc[ib, "debito"],
          set(norm(deb_banco.loc[ib, "descricao"]).split()),
@@ -284,15 +241,10 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         def _candidato(wset, bnorm):
             if not wset and not bnorm:
                 return False
-            if palavras_p & wset:
-                return True
-            if _prefixo_overlap(palavras_p, wset) > 0:
-                return True
-            if _tem_alias(palavras_p, wset):
-                return True
-            if _eh_imposto_prefeitura(palavras_p, wset):
-                return True
-            # SequenceMatcher com threshold alto para evitar RANELLI↔ANDERLE falsos
+            if palavras_p & wset: return True
+            if _prefixo_overlap(palavras_p, wset) > 0: return True
+            if _tem_alias(palavras_p, wset): return True
+            if _eh_imposto_prefeitura(palavras_p, wset): return True
             if prev_norm and bnorm and SequenceMatcher(None, prev_norm, bnorm).ratio() >= 0.65:
                 return True
             return False
@@ -306,7 +258,6 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         if total_cands < prev_val * 0.70:
             continue
 
-        # Greedy: maiores valores primeiro, acumula até ≈ alvo (tolerância 20%)
         cands.sort(key=lambda x: x[1], reverse=True)
         sel, total = [], 0.0
         for ib, v in cands:
@@ -320,10 +271,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 usados_banco.add(ib)
             usados_prev.add(ip)
 
-    # ── Passo 3: enriquece casamentos 1:1 parciais com boletos NÃO PREVISTOS ──
-    # Se um par já casou 1:1 mas o valor pago é muito menor que o previsto,
-    # busca boletos livres com nome similar que, somados, completam o previsto.
-    atribuicoes_enrich = {}  # ip -> (ib_principal, [ibs_extras], total)
+    # ── Passo 3: enriquece casamentos 1:1 parciais ───────────────────────
+    atribuicoes_enrich = {}
 
     for ip, (ib_principal, score) in list(atribuicoes.items()):
         prev     = deb_prev.loc[ip]
@@ -331,31 +280,26 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         prev_val = prev["debito"]
         pago_val = deb["debito"]
 
-        # Tenta enriquecer qualquer match com diferença > 1% (não só abaixo de 85%)
         if pago_val >= prev_val * 0.99:
             continue
-        # Também não enriquece se já pagou mais do que o previsto
         if pago_val > prev_val:
             continue
 
         prev_norm  = norm(prev["descricao"])
         palavras_p = set(prev_norm.split())
 
-        # Boletos livres com nome similar ao previsto — ignora boletos sem nome
         extras = [(ib, v) for ib, v, wset, bnorm in livres_info
                   if ib not in usados_banco
                   and (wset or bnorm)
                   and v <= (prev_val - pago_val) * 1.30
-                  and (palavras_p & wset                          # palavra exata (RANELLI, ANDERLE…)
-                       or _prefixo_overlap(palavras_p, wset) > 0  # prefixo (COOP↔COOPERATIVA)
-                       or _tem_alias(palavras_p, wset)             # alias explícito
+                  and (palavras_p & wset
+                       or _prefixo_overlap(palavras_p, wset) > 0
+                       or _tem_alias(palavras_p, wset)
                        or _eh_imposto_prefeitura(palavras_p, wset))]
-                  # ← SequenceMatcher REMOVIDO do enriquecimento: evita RANELLI↔ANDERLE cruzados
 
         if not extras:
             continue
 
-        # Greedy: acumula extras partindo do valor já pago
         extras.sort(key=lambda x: x[1], reverse=True)
         sel_extras, acum = [], pago_val
         for ib, v in extras:
@@ -374,29 +318,46 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
 
     LIMITE_ALERTA = float(limite_alerta)
 
+    # ── Passo 4: liga NÃO PAGO × NÃO PREVISTO por valor idêntico ────────
+    # Se sobrar um previsto sem par e um débito bancário sem par com o mesmo
+    # valor, quase certamente é o mesmo pagamento com nome escrito diferente.
+    valor_to_banco_livre: dict[float, list] = {}
+    for ib in deb_banco.index:
+        if ib not in usados_banco:
+            v = round(deb_banco.loc[ib, "debito"], 2)
+            valor_to_banco_livre.setdefault(v, []).append(ib)
+
+    atribuicoes_valor: dict[int, int] = {}
+    for ip in deb_prev.index:
+        if ip in atribuicoes or ip in atribuicoes_multi or ip in atribuicoes_enrich:
+            continue
+        v = round(deb_prev.loc[ip, "debito"], 2)
+        candidatos = valor_to_banco_livre.get(v, [])
+        if candidatos:
+            ib = candidatos.pop(0)
+            atribuicoes_valor[ip] = ib
+            usados_prev.add(ip)
+            usados_banco.add(ib)
+
     # ── Monta linhas da tabela ───────────────────────────────────────────
     linhas = []
 
+    _GENERICOS = {"PGTO","PAGO","BOLETO","DEBITO","CREDITO","TRANSFERENCIA","TED","PIX","PAGAMENTO"}
+    def _melhor_nome(desc: str) -> str:
+        partes = [p.strip() for p in str(desc).split("/")]
+        for parte in reversed(partes):
+            palavras = set(parte.upper().split())
+            if palavras and not palavras.issubset(_GENERICOS):
+                return parte
+        return partes[0]
+
     def _linha_multi(prev, debs, all_ibs, total):
-        """Monta linha para casamento de 1 previsto com N boletos."""
         diff  = round(total - prev["debito"], 2)
         pct   = diff / prev["debito"] * 100 if prev["debito"] else 0
         alerta = f"🔴 Diferença de R$ {abs(diff):,.2f}" if abs(diff) > 0.01 else ""
         status = "✅ OK (múlt.)" if abs(diff) <= prev["debito"] * 0.02 else "⚠️ VALOR DIFERENTE (múlt.)"
         banco_str = debs["banco"].iloc[0] if debs["banco"].nunique() == 1 else "Múltiplos"
 
-        # Extrai o nome do beneficiário: ignora tokens genéricos e prefere a parte após "/"
-        _GENERICOS = {"PGTO", "PAGO", "BOLETO", "DEBITO", "DEBITO", "CREDITO",
-                      "TRANSFERENCIA", "TED", "PIX", "PAGAMENTO"}
-        def _melhor_nome(desc: str) -> str:
-            partes = [p.strip() for p in str(desc).split("/")]
-            for parte in reversed(partes):          # tenta do fim para o início
-                palavras = set(parte.upper().split())
-                if palavras and not palavras.issubset(_GENERICOS):
-                    return parte
-            return partes[0]
-
-        # Escolhe o nome mais informativo entre todos os boletos do grupo
         benef = ""
         for desc in debs["descricao"]:
             candidato = _melhor_nome(desc)
@@ -416,10 +377,28 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             "Pago Para":             f"Múltiplos boletos ({len(all_ibs)}x) / {benef}",
             "Valor Pago (R$)":       total,
             "Diferença (R$)":        diff,
-            "Diferença (%)":         round(pct, 1),
+            "Diferença (%)"):         round(pct, 1),
         }
 
     for ip, prev in deb_prev.iterrows():
+        if ip in atribuicoes_valor:
+            ib  = atribuicoes_valor[ip]
+            deb = deb_banco.loc[ib]
+            linhas.append({
+                "Status":                  "⚠️ NOME DIVERGENTE",
+                "🔴 Alerta":               "🔴 Mesmo valor — verificar se é o mesmo beneficiário",
+                "Data Prevista":           prev["data"],
+                "Beneficiário Previsto":   prev["descricao"],
+                "Valor Previsto (R$)":     prev["debito"],
+                "Data Pago":               deb["data"],
+                "Banco":                   deb["banco"],
+                "Pago Para":               deb["descricao"],
+                "Valor Pago (R$)":         deb["debito"],
+                "Diferença (R$)":          0.0,
+                "Diferença (%)"):           0.0,
+            })
+            continue
+
         if ip in atribuicoes_enrich:
             ib_princ, ibs_extras, total = atribuicoes_enrich[ip]
             all_ibs = [ib_princ] + ibs_extras
@@ -449,11 +428,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             else:
                 status = "⚠️ DIVERGÊNCIA"
 
-            # Alerta somente quando há diferença de valor (independente do beneficiário)
-            if abs(diff) > 0.01:
-                alerta = f"🔴 Diferença de R$ {abs(diff):,.2f}"
-            else:
-                alerta = ""
+            alerta = f"🔴 Diferença de R$ {abs(diff):,.2f}" if abs(diff) > 0.01 else ""
 
             linhas.append({
                 "Status":                  status,
@@ -466,7 +441,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 "Pago Para":               deb["descricao"],
                 "Valor Pago (R$)":         deb["debito"],
                 "Diferença (R$)":          diff,
-                "Diferença (%)":           round(pct, 1),
+                "Diferença (%)"):           round(pct, 1),
             })
         else:
             linhas.append({
@@ -480,10 +455,9 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                 "Pago Para":               "",
                 "Valor Pago (R$)":         None,
                 "Diferença (R$)":          -prev["debito"],
-                "Diferença (%)":           -100.0,
+                "Diferença (%)"):           -100.0,
             })
 
-    # ── Débitos bancários sem par = não previstos ────────────────────────
     OPERACIONAL = ["TARIFA","TAXA","IOF","JUROS","INSS","FGTS","SALDO","RENTAB",
                    "FACILCRED","RENDE FACIL","DEBITO SERV"]
     for ib, deb in deb_banco.iterrows():
@@ -503,11 +477,10 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             "Pago Para":               deb["descricao"],
             "Valor Pago (R$)":         deb["debito"],
             "Diferença (R$)":          deb["debito"],
-            "Diferença (%)":           None,
+            "Diferença (%)"):           None,
         })
 
     return pd.DataFrame(linhas)
-
 
 
 def cor_linha(row):
@@ -515,9 +488,9 @@ def cor_linha(row):
     if s.startswith("✅"):
         bg = "#d4edda; color:#155724"
     elif "BENEFICIÁRIO" in s:
-        bg = "#f8d7da; color:#721c24"   # vermelho — nome trocado é mais grave
+        bg = "#f8d7da; color:#721c24"
     elif s.startswith("⚠️"):
-        bg = "#fff3cd; color:#856404"   # amarelo — só valor diferente
+        bg = "#fff3cd; color:#856404"
     elif s.startswith("🚨"):
         bg = "#f8d7da; color:#721c24"
     else:
@@ -534,18 +507,17 @@ def fmt_dt(v):
     except: return ""
 
 # ─────────────────────────────────────────────────────────────────────────────
-st.title("🌾 Débitos Previstos × Efetivados")
-st.caption("Moinho de Trigo — comparação diária: o que estava previsto na planilha vs o que saiu dos bancos")
+st.title("🌾 Débitos Sistema × Efetivados")
+st.caption("Moinho de Trigo — comparação: o que o sistema registrou como a pagar vs o que saiu dos bancos")
 
-# Sidebar
 with st.sidebar:
     st.header("📂 Arquivos")
     extratos_up = st.file_uploader("Extratos bancários (PDF, XLSX, CSV)",
         type=["pdf","xlsx","xls","csv"], accept_multiple_files=True)
-    planilha_up = st.file_uploader("Planilha de previsões (FC)",
-        type=["xlsx","xls"])
+    planilha_up = st.file_uploader("Planilha do sistema interno (XLSX, CSV)",
+        type=["xlsx","xls","csv"])
     st.caption("Extratos: bradesco_*.pdf · bradesco_alimentos_*.pdf · sicredi_*.pdf · bb_*.pdf · bb_alimentos_*.pdf · banrisul_*.pdf")
-    st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO e transferências com nome do beneficiário)")
+    st.caption("Consulta Banrisul: banrisul_consulta_*.pdf (enriquece PGTO BOLETO com nome do beneficiário)")
     st.divider()
     data_sel = st.date_input("📅 Data do extrato", value=datetime.now().date())
     mostrar_periodo = st.toggle("Ver período (mais de um dia)", value=False)
@@ -559,17 +531,17 @@ if not rodar:
     st.markdown("""
 ### Como funciona
 1. Faça upload dos **extratos bancários** do dia (PDF ou Excel)
-2. Faça upload da **planilha de previsões** (FC)
-3. Selecione o **mês** e clique em **▶ Comparar**
+2. Faça upload da **planilha do sistema interno** (Excel ou CSV)
+3. Selecione a **data** e clique em **▶ Comparar**
 
 A tabela mostra linha por linha:
 
 | Cor | O que significa |
 |---|---|
-| 🟢 Verde | Pago conforme previsto |
-| 🟡 Amarelo | Pago, mas valor diferente do previsto |
-| 🔴 Vermelho | **Saiu do banco sem estar na planilha** |
-| ⬜ Cinza | Previsto mas ainda não pago |
+| 🟢 Verde | Pago conforme o sistema |
+| 🟡 Amarelo | Pago, mas valor diferente do sistema |
+| 🔴 Vermelho | **Saiu do banco sem estar no sistema** |
+| ⬜ Cinza | No sistema mas ainda não pago |
 """)
     st.stop()
 
@@ -577,13 +549,13 @@ if not extratos_up:
     st.error("Faça upload dos extratos bancários.")
     st.stop()
 if not planilha_up:
-    st.error("Faça upload da planilha de previsões.")
+    st.error("Faça upload da planilha do sistema interno.")
     st.stop()
 
-# Lê extratos e consultas de operações
+# Lê extratos
 with st.spinner("Lendo extratos..."):
     dfs = []
-    dfs_consulta = []   # arquivos de Consulta Operações do Banrisul
+    dfs_consulta = []
     for f in extratos_up:
         conteudo = f.read()
         if eh_consulta_banrisul(f.name):
@@ -613,11 +585,9 @@ if not dfs:
 
 df_banco = pd.concat(dfs, ignore_index=True)
 
-# ── Enriquece descrições do Banrisul com nomes da Consulta Operações ────────
+# Enriquece Banrisul com Consulta Operações
 if dfs_consulta:
     df_cons = pd.concat(dfs_consulta, ignore_index=True)
-    # Lookup: valor_arredondado → lista de (data, beneficiario)
-    # Indexado só por valor para tolerar datas com 1 dia de diferença
     _lookup_val: dict = {}
     for _, row in df_cons.iterrows():
         v = round(row["valor"], 2)
@@ -641,7 +611,6 @@ if dfs_consulta:
         if not candidatos:
             return row["descricao"]
         data_row = row["data"]
-        # Tenta match exato de data primeiro, depois aceita ±1 dia
         for delta in (0, 1, -1):
             alvo = data_row + pd.Timedelta(days=delta)
             for i, (data_c, nome) in enumerate(candidatos):
@@ -652,21 +621,20 @@ if dfs_consulta:
 
     df_banco["descricao"] = df_banco.apply(_enriquecer_banrisul, axis=1)
 
-df_banco_full = df_banco.copy()  # cópia completa para cálculo de saldo (antes do filtro de data)
+df_banco_full = df_banco.copy()
 
-# Determina meses necessários a partir das datas selecionadas
-meses_necessarios = list({_mes_nome(d.month)
-                          for d in pd.date_range(data_sel, data_fim, freq="MS").date.tolist()
-                          or [data_sel]})
-if not meses_necessarios:
-    meses_necessarios = [_mes_nome(data_sel.month)]
-
-# Lê planilha
-with st.spinner("Lendo planilha de previsões..."):
-    df_prev, err = ler_planilha(planilha_up.read(), meses=meses_necessarios, filename=planilha_up.name)
+# Lê planilha do sistema
+with st.spinner("Lendo planilha do sistema..."):
+    df_prev, err = ler_planilha_sistema(planilha_up.read(), filename=planilha_up.name)
     if err:
         st.error(err); st.stop()
     st.sidebar.success(f"✔ {planilha_up.name} ({len(df_prev)} lançamentos)")
+
+# Mostra colunas detectadas para diagnóstico
+with st.sidebar.expander("🔍 Colunas detectadas na planilha", expanded=False):
+    st.write("Se alguma coluna estiver errada, informe para ajustar o leitor.")
+    st.write(df_prev.dtypes.to_frame("tipo").T)
+    st.dataframe(df_prev.head(3))
 
 # Filtra pelo intervalo de datas
 data_ini_ts = pd.Timestamp(data_sel)
@@ -677,43 +645,28 @@ df_prev  = df_prev[(df_prev["data"]  >= data_ini_ts) & (df_prev["data"]  <= data
 
 if df_banco.empty and df_prev.empty:
     st.warning(f"Nenhum lançamento encontrado para {data_sel.strftime('%d/%m/%Y')}. "
-               "Verifique se a data bate com os extratos enviados.")
+               "Verifique se a data bate com os arquivos enviados.")
     st.stop()
 
 periodo_label = (data_sel.strftime("%d/%m/%Y") if data_sel == data_fim
                  else f"{data_sel.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}")
 st.info(f"📅 Mostrando: **{periodo_label}** — "
         f"{len(df_banco[df_banco['debito']>0])} débitos bancários · "
-        f"{len(df_prev[df_prev['debito']>0])} previstos")
+        f"{len(df_prev[df_prev['debito']>0])} previstos no sistema")
 
-# Saldos — usa dataset completo (sem filtro de data) para pegar o último saldo real do arquivo
+# Saldos
 st.subheader("💰 Saldos dos Bancos")
 bancos_presentes = [b for b in ["Bradesco","Bradesco Alimentos","Sicredi","BB","BB Alimentos","Banrisul"]
                     if not df_banco_full[df_banco_full["banco"] == b].empty]
-cols = st.columns(len(bancos_presentes) + 1)
+cols = st.columns(max(len(bancos_presentes), 1))
 for i, b in enumerate(bancos_presentes):
     sub_b = df_banco_full[df_banco_full["banco"] == b]
     sub_nz = sub_b["saldo"][sub_b["saldo"] != 0]
     s = float(sub_nz.iloc[-1]) if not sub_nz.empty else 0.0
     cols[i].metric(b, fmt_brl(s))
 
-# Saldo FC da planilha para o dia selecionado
-from src.readers.planilha import ler_saldo_fc as _ler_saldo_fc
-saldo_fc = None
-if planilha_up:
-    try:
-        import tempfile as _tmp
-        with _tmp.NamedTemporaryFile(suffix=".xlsx", delete=False) as _t:
-            planilha_up.seek(0); _t.write(planilha_up.read()); _tp = Path(_t.name)
-        saldo_fc = _ler_saldo_fc(_tp, pd.Timestamp(data_sel))
-        _tp.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-cols[-1].metric("📊 Saldo FC do Dia", fmt_brl(saldo_fc) if saldo_fc is not None else "—")
-
 # Concilia
-with st.spinner("Comparando previstos × efetivados..."):
+with st.spinner("Comparando sistema × efetivados..."):
     df_res = conciliar(df_prev, df_banco)
 
 # Métricas
@@ -726,9 +679,9 @@ v_div  = df_res[df_res["Status"].str.startswith("⚠️")]["Diferença (R$)"].ab
 v_nao  = df_res[df_res["Status"].str.startswith("🚨")]["Valor Pago (R$)"].sum()
 
 c1,c2,c3,c4 = st.columns(4)
-c1.metric("✅ Conforme previsto", n_ok)
+c1.metric("✅ Conforme sistema", n_ok)
 c2.metric("⚠️ Valor diferente",  n_div, delta=fmt_brl(v_div) if n_div else None, delta_color="inverse")
-c3.metric("🚨 Fora da planilha", n_nao, delta=fmt_brl(v_nao) if n_nao else None, delta_color="inverse")
+c3.metric("🚨 Fora do sistema",  n_nao, delta=fmt_brl(v_nao) if n_nao else None, delta_color="inverse")
 c4.metric("🕐 Ainda não pago",   n_pend)
 
 # Filtros
@@ -748,7 +701,6 @@ if busca:
             df_view["Pago Para"].str.contains(busca, case=False, na=False))
     df_view = df_view[mask]
 
-# Formata para exibição
 df_show = df_view.copy()
 df_show["Data Prevista"]  = df_show["Data Prevista"].apply(fmt_dt)
 df_show["Data Pago"]      = df_show["Data Pago"].apply(fmt_dt)
@@ -767,34 +719,30 @@ st.dataframe(
     column_config={
         "Status":                  st.column_config.TextColumn(width=200),
         "🔴 Alerta":               st.column_config.TextColumn(width=280),
-        "Data Prevista":           st.column_config.TextColumn("Data Prev.", width=100),
-        "Beneficiário Previsto":   st.column_config.TextColumn("Previsto Para", width=230),
-        "Valor Previsto (R$)":     st.column_config.TextColumn("Vlr Previsto", width=130),
+        "Data Prevista":           st.column_config.TextColumn("Data Sist.", width=100),
+        "Beneficiário Previsto":   st.column_config.TextColumn("Previsto (Sistema)", width=230),
+        "Valor Previsto (R$)":     st.column_config.TextColumn("Vlr Sistema", width=130),
         "Data Pago":               st.column_config.TextColumn("Data Pago", width=100),
         "Banco":                   st.column_config.TextColumn(width=90),
         "Pago Para":               st.column_config.TextColumn(width=230),
         "Valor Pago (R$)":         st.column_config.TextColumn("Vlr Pago", width=130),
         "Diferença (R$)":          st.column_config.TextColumn("Diferença R$", width=120),
-        "Diferença (%)":           st.column_config.TextColumn("Diferença %", width=100),
+        "Diferença (%)"):           st.column_config.TextColumn("Diferença %", width=100),
     },
 )
 
-# Download com formatação Excel
+# Download Excel
 def _formatar_excel(wb):
-    """Aplica formatação (cores, larguras, cabeçalho) a todas as abas do workbook."""
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 
-    # Mapeamento status → cor de fundo (hex sem #)
     _COR_STATUS = {
-        "✅": ("D4EDDA", "155724"),   # verde
-        "⚠️": ("FFF3CD", "856404"),   # amarelo
-        "🚨": ("F8D7DA", "721C24"),   # vermelho
-        "🕐": ("E2E3E5", "383D41"),   # cinza
+        "✅": ("D4EDDA", "155724"),
+        "⚠️": ("FFF3CD", "856404"),
+        "🚨": ("F8D7DA", "721C24"),
+        "🕐": ("E2E3E5", "383D41"),
     }
-    _COR_BENEF = ("F8D7DA", "721C24")  # vermelho para beneficiário trocado
-
-    # Larguras preferidas por nome de coluna (em caracteres)
+    _COR_BENEF = ("F8D7DA", "721C24")
     _LARGURAS = {
         "Status": 32, "🔴 Alerta": 40,
         "Data Prevista": 14, "Data Pago": 14,
@@ -803,32 +751,24 @@ def _formatar_excel(wb):
         "Diferença (R$)": 18, "Diferença (%)": 14,
         "Banco": 14,
     }
-
     borda_fina = Border(
         left=Side(style="thin", color="CCCCCC"),
         right=Side(style="thin", color="CCCCCC"),
         top=Side(style="thin", color="CCCCCC"),
         bottom=Side(style="thin", color="CCCCCC"),
     )
-
     for ws in wb.worksheets:
-        # ── Cabeçalho ──────────────────────────────────────────────────────
         for cell in ws[1]:
             cell.font      = Font(bold=True, color="FFFFFF", size=11)
             cell.fill      = PatternFill("solid", fgColor="2C3E50")
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             cell.border    = borda_fina
         ws.row_dimensions[1].height = 30
-
-        # Descobre índice da coluna Status
         status_col = None
         headers = [c.value for c in ws[1]]
         if "Status" in headers:
             status_col = headers.index("Status")
-
-        # ── Linhas de dados ─────────────────────────────────────────────────
         for row in ws.iter_rows(min_row=2):
-            # Determina cor pela coluna Status
             bg, fg = "FFFFFF", "000000"
             if status_col is not None:
                 status_val = str(row[status_col].value or "")
@@ -839,18 +779,14 @@ def _formatar_excel(wb):
                         if status_val.startswith(prefix):
                             bg, fg = b, f
                             break
-
             fill = PatternFill("solid", fgColor=bg)
             font_cor = Font(color=fg, size=10)
-
             for cell in row:
                 cell.fill      = fill
                 cell.font      = font_cor
                 cell.border    = borda_fina
                 cell.alignment = Alignment(vertical="center", wrap_text=False)
-
                 col_name = headers[cell.column - 1] if cell.column - 1 < len(headers) else ""
-                # Converte colunas monetárias para número real → Excel consegue somar
                 if col_name in ("Valor Previsto (R$)", "Valor Pago (R$)", "Diferença (R$)"):
                     raw = str(cell.value or "").replace("R$", "").replace("+", "").replace(",", "").strip()
                     try:
@@ -859,22 +795,17 @@ def _formatar_excel(wb):
                         cell.alignment = Alignment(horizontal="right", vertical="center")
                     except Exception:
                         pass
-
-        # ── Larguras das colunas ────────────────────────────────────────────
         for i, col_name in enumerate(headers, start=1):
             larg = _LARGURAS.get(col_name, 18)
             ws.column_dimensions[get_column_letter(i)].width = larg
-
-        # Congela cabeçalho
         ws.freeze_panes = "A2"
-
     return wb
 
 
 buf = io.BytesIO()
 with pd.ExcelWriter(buf, engine="openpyxl") as w:
     df_show.to_excel(w, sheet_name="Comparativo", index=False)
-    df_res[df_res["Status"].str.startswith("🚨")].to_excel(w, sheet_name="Fora da Planilha", index=False)
+    df_res[df_res["Status"].str.startswith("🚨")].to_excel(w, sheet_name="Fora do Sistema", index=False)
     df_res[df_res["Status"].str.startswith("⚠️")].to_excel(w, sheet_name="Divergências de Valor", index=False)
     df_banco.to_excel(w, sheet_name="Extrato Consolidado", index=False)
 
@@ -887,6 +818,6 @@ _wb.save(buf2)
 
 st.download_button("📥 Baixar Excel",
     data=buf2.getvalue(),
-    file_name=f"comparativo_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+    file_name=f"comparativo_sistema_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True)
