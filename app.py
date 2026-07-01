@@ -89,7 +89,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             "e","a","o","em","na","no","por","com","um","uma",
             "log","transp","trans","logistica","logísticas","comercio",
             "industria","servicos","alimentos","agro","agropecuaria",
-            "transportes","distribuidora","distribuidores"}
+            "transportes","distribuidora","distribuidores",
+            "frete","fretes","cif","fob","envio","entrega"}
 
     _norm_cache = {}
     def norm(s):
