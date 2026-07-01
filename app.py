@@ -110,9 +110,10 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
     _norm_cache = {}
     def norm(s):
         if s not in _norm_cache:
-            # Remove pontuação (& vira espaço → "M&F" = "M F"; mantém tokens curtos)
-            t = re.sub(r"[^\w\s]", " ", str(s).upper())
-            # Sem filtro de comprimento — preserva abreviações como "M", "F", "T", "R"
+            t = str(s).upper()
+            # Junta siglas conectadas por & antes de remover pontuação (M&F → MF)
+            t = re.sub(r'([A-Z])&([A-Z])', r'\1\2', t)
+            t = re.sub(r"[^\w\s]", " ", t)
             _norm_cache[s] = " ".join(w for w in t.split() if w.lower() not in STOP)
         return _norm_cache[s]
 
@@ -285,8 +286,8 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
         def _candidato(wset, bnorm):
             if not wset and not bnorm:
                 return False
-            _sig_p = {w for w in palavras_p if len(w) >= 3}
-            _sig_w = {w for w in wset if len(w) >= 3}
+            _sig_p = {w for w in palavras_p if len(w) >= 2}
+            _sig_w = {w for w in wset if len(w) >= 2}
             if _sig_p & _sig_w: return True
             if _prefixo_overlap(palavras_p, wset) > 0:
                 return True
@@ -348,7 +349,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
                   if ib not in usados_banco
                   and (wset or bnorm)
                   and v <= (prev_val - pago_val) * 1.30
-                  and ({w for w in palavras_p if len(w) >= 3} & {w for w in wset if len(w) >= 3}
+                  and ({w for w in palavras_p if len(w) >= 2} & {w for w in wset if len(w) >= 2}
                        or _prefixo_overlap(palavras_p, wset) > 0
                        or _tem_alias(palavras_p, wset)
                        or _eh_imposto_prefeitura(palavras_p, wset))]
