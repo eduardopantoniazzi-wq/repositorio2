@@ -191,7 +191,7 @@ def conciliar(df_prev, df_banco, limite_alerta: float = 1_500.0):
             elif _eh_imposto_prefeitura(palavras_a, palavras_b):
                 s_nome = 0.65
                 limite_dias = 10
-            elif exatas:
+            elif exatas_sig:
                 s_nome = 0.32
                 limite_dias = 5
             else:
